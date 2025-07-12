@@ -36,7 +36,7 @@ def read_geo_csv(path=GEO_CSV_PATH):
                 city = row.get('city', '').strip() or "-"
                 country = row.get('country', '').strip().upper() or "N/A"
                 org = row.get('org', '').strip()
-                # Legacy: provider = org без префіксу ASxxxx
+                # Legacy: provider = org without ASxxxx prefix
                 org = re.sub(r"^AS\d+\s+", "", org) or "N/A"
                 # Legacy: region = continent
                 region = get_continent(country)
@@ -62,4 +62,4 @@ def read_geo_csv(path=GEO_CSV_PATH):
                 })
     except Exception as e:
         logging.error(f"Failed to read geo CSV file '{path}': {e}")
-    return nodes 
+    return nodes
