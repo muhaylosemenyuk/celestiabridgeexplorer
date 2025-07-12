@@ -1,4 +1,4 @@
-# CelestiaBridge (New Backend)
+# CelestiaBridge
 
 ## Project Description
 
