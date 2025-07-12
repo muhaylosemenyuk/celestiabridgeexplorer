@@ -65,23 +65,23 @@ def show_table(table):
 
 @cli.command(name="export_agg")
 @click.argument('metric_name')
-@click.option('--hours', default=24, help='Період агрегації в годинах')
-@click.option('--out', default=None, help='Файл для збереження JSON (опціонально)')
+@click.option('--hours', default=24, help='Aggregation period in hours')
+@click.option('--out', default=None, help='File to save JSON (optional)')
 def export_agg(metric_name, hours, out):
     """Export aggregated metrics (avg/min/max/count per instance) as JSON."""
     js = export_agg_json(metric_name, period_hours=hours, out_path=out)
     click.echo(js)
 
 @cli.command(name="export_releases")
-@click.option('--out', default=None, help='Файл для збереження JSON (опціонально)')
+@click.option('--out', default=None, help='File to save JSON (optional)')
 def export_releases(out):
     """Export releases as JSON."""
     js = export_releases_json(out_path=out)
     click.echo(js)
 
 @cli.command(name="export_chain")
-@click.option('--out', default=None, help='Файл для збереження JSON (опціонально)')
-@click.option('--limit', default=100, help='Кількість останніх записів (default 100)')
+@click.option('--out', default=None, help='File to save JSON (optional)')
+@click.option('--limit', default=100, help='Number of latest records (default 100)')
 def export_chain(out, limit):
     """Export chain metrics as JSON (legacy format)."""
     js = export_chain_json(out_path=out, limit=limit)
@@ -91,7 +91,7 @@ def export_chain(out, limit):
         click.echo(js)
 
 @cli.command(name="export_nodes")
-@click.option('--out', default=None, help='Файл для збереження JSON (опціонально)')
+@click.option('--out', default=None, help='File to save JSON (optional)')
 def export_nodes(out):
     """Export nodes as JSON."""
     js = export_nodes_json(out_path=out)
@@ -101,4 +101,4 @@ def export_nodes(out):
         click.echo(js)
 
 if __name__ == "__main__":
-    cli() 
+    cli()
