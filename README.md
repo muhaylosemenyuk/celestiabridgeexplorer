@@ -16,7 +16,6 @@ CelestiaBridge is a modular backend platform for collecting, processing, aggrega
 - All dependencies are managed via `requirements.txt`
 - All error handling via try/except and logging
 - All data models are in `models/`
-- Old `context/` folder is legacy and not used in new code
 
 **Intended Users:**
 - Developers, analysts, DevOps, Celestia dashboard operators
@@ -26,7 +25,7 @@ CelestiaBridge is a modular backend platform for collecting, processing, aggrega
 
 ## Quick Start
 
-1. Create and activate a virtual environment:
+1. Create and actiate a virtual environment:
    ```bash
    python -m venv venv
    source venv/bin/activate  # or venv\Scripts\activate for Windows
