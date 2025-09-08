@@ -58,30 +58,108 @@ def paginate(data: List[dict], skip: int, limit: int):
 # --- API Endpoints ---
 @app.get("/nodes", response_model=dict, tags=["Nodes"])
 def get_nodes(skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)):
-    """Get list of nodes with pagination."""
+    """
+    Returns a paginated list of Celestia network nodes.
+
+    Parameters:
+      - skip (int): Number of records to skip (for pagination).
+      - limit (int): Maximum number of records to return (for pagination, max 1000).
+
+    Response:
+      - total (int): Total number of nodes.
+      - skip (int): Number of skipped records.
+      - limit (int): Limit used for pagination.
+      - items (List[NodeOut]): List of node objects, each with:
+          - id (int)
+          - peer_id (str)
+          - ip (str, optional)
+          - city (str, optional)
+          - region (str, optional)
+          - country (str, optional)
+          - lat (float, optional)
+          - lon (float, optional)
+          - org (str, optional)
+    """
     nodes = json.loads(export_nodes_json())
     return paginate(nodes, skip, limit)
 
 @app.get("/chain", response_model=dict, tags=["Chain"])
 def get_chain(skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)):
-    """Get chain metrics (legacy) with pagination."""
+    """
+    Returns a paginated list of Celestia chain metrics.
+
+    Parameters:
+      - skip (int): Number of records to skip (for pagination).
+      - limit (int): Maximum number of records to return (for pagination, max 1000).
+
+    Response:
+      - total (int): Total number of records.
+      - skip (int): Number of skipped records.
+      - limit (int): Limit used for pagination.
+      - items (List[ChainOut]): List of chain metric objects, each with:
+          - timestamp (str, optional)
+          - staked_tokens (float, optional)
+          - missed_blocks (int, optional)
+          - inflation (float, optional)
+          - apr (float, optional)
+          - price (float, optional)  # TIA token price here!
+          - delegators (int, optional)
+          - annual_provisions (float, optional)
+          - supply (float, optional)
+    """
     chain = json.loads(export_chain_json(limit=10000))  # get all, then paginate
     return paginate(chain, skip, limit)
 
 @app.get("/metrics/aggregate", response_model=List[AggregatedMetricOut], tags=["Metrics"])
 def get_aggregated_metrics(metric_name: str, hours: int = Query(24, ge=1, le=168)):
-    """Get aggregated metrics per instance for the last N hours."""
+    """
+    Returns aggregated metrics per instance for the last N hours.
+
+    Parameters:
+      - metric_name (str): Name of the metric to aggregate (e.g. "latency", "uptime").
+      - hours (int): Number of hours to aggregate over (default 24, max 168).
+
+    Response:
+      - List[AggregatedMetricOut]: List of objects, each with:
+          - instance (str): Instance name or ID.
+          - avg (float): Average value.
+          - min (float): Minimum value.
+          - max (float): Maximum value.
+          - count (int): Number of samples.
+    """
     data = aggregate_metrics(metric_name, period_hours=hours)
     return data
 
 @app.get("/releases", response_model=dict, tags=["Releases"])
 def get_releases(skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)):
-    """Get releases with pagination."""
+    """
+    Returns a paginated list of Celestia software releases.
+
+    Parameters:
+      - skip (int): Number of records to skip (for pagination).
+      - limit (int): Maximum number of records to return (for pagination, max 1000).
+
+    Response:
+      - total (int): Total number of releases.
+      - skip (int): Number of skipped records.
+      - limit (int): Limit used for pagination.
+      - items (List[ReleaseOut]): List of release objects, each with:
+          - version (str)
+          - published_at (str, optional)
+          - announce_str (str, optional)
+          - deadline_str (str, optional)
+    """
     releases = json.loads(export_releases_json())
     return paginate(releases, skip, limit)
 
 @app.get("/health", tags=["Utils"])
 def health():
+    """
+    Returns the health status of the API.
+
+    Response:
+      - status (str): "ok" if the API is running.
+    """
     return {"status": "ok"}
 
 # --- Run with: uvicorn api_main:app --reload --- 

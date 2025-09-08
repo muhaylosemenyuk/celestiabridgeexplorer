@@ -9,6 +9,8 @@ CelestiaBridge is a modular backend platform for collecting, processing, aggrega
 - Unified pipeline for data processing and normalization
 - Stores data in a structured database (PostgreSQL/SQLite)
 - Aggregation and export to JSON for dashboards/BI/analytics
+- **Multilingual support (11 languages)**
+- **Real-time data analysis through natural language queries**
 - Convenient CLI for import, export, and data viewing
 - Flexible configuration via `.env` and `config/`
 - Modular, clean, and testable codebase
@@ -35,10 +37,12 @@ CelestiaBridge is a modular backend platform for collecting, processing, aggrega
    pip install -r requirements.txt
    ```
 3. Copy `.env.example` to `.env` and edit as needed.
-4. Run the CLI:
-   ```bash
-   python main.py --help
-   ```
+
+### CLI
+
+```bash
+python main.py --help
+```
 
 ---
 
@@ -96,10 +100,18 @@ python main.py <command> --help
 - `data_sources/` — Modules for reading/parsing raw data (otel metrics, CSV, APIs)
 - `models/` — Data models (`Node`, `Chain`, `Metric`, `Release`, etc.)
 - `services/` — Business logic, integration, data merging, import/export to DB
+- `celestia_mcp/` — MCP/AI assistant: LLM router, API registry, executor, response formatter, web chat API, Grok integration
+    - `core/` — Core logic for endpoint discovery, LLM routing, execution, formatting
+    - `web_chat_api.py` — Minimal FastAPI web chat for testing the assistant
+    - `mcp_server.py` — Main MCP server class
+    - `grok_llm_client.py` — Grok LLM API integration
 - `config.py` — Main configuration file (project root)
-- `.env` — Environment variables
+- `config/` — Additional config files (optional, e.g. for environments)
+- `.env` — Environment variables (API keys, DB connection, etc.)
 - `main.py` — Entry point, CLI
-- `context/` — Legacy folder, not used in new code
+- `README.md` — Project documentation
+- `requirements.txt` — Python dependencies
+- `.gitignore` — Git ignore rules
 
 ---
 
@@ -265,6 +277,63 @@ CelestiaBridge provides an open HTTP API to access all output data in JSON forma
 ```bash
 curl "http://127.0.0.1:8000/nodes?skip=0&limit=10"
 ```
+
+---
+
+## AI Assistant (MCP)
+
+### How to Run the Assistant (MCP/Web Chat)
+
+```bash
+# 1. Start the local API (on a separate port, e.g., 8001)
+uvicorn api_main:app --port 8001
+
+# 2. Start the MCP server (assistant)
+uvicorn celestia_mcp.web_chat_api:app --reload --port 8000
+```
+- The MCP server will be available at http://127.0.0.1:8000
+- Web chat for testing: http://127.0.0.1:8000
+
+### Capabilities
+- Accepts natural language queries in any language (automatic language detection).
+- Supports analytical queries: filtering, sorting, aggregation, top-N, unique values, sum, min/max, count.
+- Works with both local API and Cosmos REST API, automatically selecting the required endpoint.
+- Handles large paginated data (aggregation across all pages).
+- Responds in the user's language, formats answers as paragraphs and lists, never hallucinates data.
+- Supports query chaining (e.g., get block height → get block by height).
+
+### How to Add New Endpoints/Queries
+- Add a new function to `services/cosmos_api.py` or to FastAPI (`api_main.py`).
+- For Cosmos REST API:
+  - If the endpoint returns paginated data, add the attribute `is_pagination = True` to the function.
+  - Describe parameters and response structure in the docstring in English.
+- For local API:
+  - Add the endpoint to FastAPI with a detailed English docstring.
+- Optionally update documentation in `cosmos_api_summary.md`.
+- The assistant will automatically discover new endpoints via the registry mechanism.
+
+### Assistant Workflow Diagram
+
+```mermaid
+flowchart TD
+    User["User (any language)"] -->|"Natural language query"| WebChat["Web Chat UI / API"]
+    WebChat --> MCP["CelestiaMCP Server"]
+    MCP --> LLMRouter["LLM Router (Grok)"]
+    LLMRouter -->|"Plan: endpoints, filters, aggregation"| APIExecutor
+    APIExecutor -->|"Executes"| LocalAPI["Local API (FastAPI)"]
+    APIExecutor -->|"Executes"| CosmosAPI["Cosmos REST API"]
+    APIExecutor -->|"Aggregates, filters, paginates"| Aggregator["Universal Pagination/Aggregation"]
+    APIExecutor -->|"Results"| ResponseFormatter
+    ResponseFormatter -->|"Final answer (user's language)"| WebChat
+```
+
+### Example: Complex Query
+
+> "Show the top 5 delegators for validator X with a balance greater than 1,000,000 TIA"
+
+- The LLM generates a plan: selects the endpoint, adds a filter, aggregation, and parameter substitution.
+- The APIExecutor executes all steps, passing results between queries as needed.
+- The answer is returned in a user-friendly format, in the user's language.
 
 ---
 
