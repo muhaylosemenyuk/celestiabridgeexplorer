@@ -4,10 +4,8 @@ logging.basicConfig(level=logging.INFO)
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from celestia_mcp.mcp_server import CelestiaMCP
-from celestia_mcp.grok_llm_client import llm_client
-
 app = FastAPI()
-mcp = CelestiaMCP(llm_client, local_api_url="http://localhost:8001")
+mcp = CelestiaMCP(None, local_api_url="http://localhost:8001")
 
 @app.post("/chat")
 async def chat(request: Request):

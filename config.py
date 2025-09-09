@@ -28,6 +28,8 @@ API_TOTAL_DELEGATORS_URL = "https://celestia-api.polkachu.com/cosmos/staking/v1b
 GROK_API_KEY = os.getenv("GROK_API_KEY", "")
 GROK_API_BASE_URL = os.getenv("GROK_API_BASE_URL", "https://api.x.ai/v1")
 GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")  # "grok" or "gemini"
 
 VALOPER_ADDRESSES = os.getenv("VALOPER_ADDRESSES", "").split(",") if os.getenv("VALOPER_ADDRESSES") else []
 

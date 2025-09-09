@@ -1,13 +1,28 @@
 import json
 from typing import List, Dict, Any
 import logging
+from config import LLM_PROVIDER
+from celestia_mcp.grok_llm_client import llm_client as grok_llm_client
+from celestia_mcp.gemini_llm_client import GeminiLLMClient
 
 logger = logging.getLogger("celestia_mcp.llm_router")
 
+def get_llm_client():
+    if LLM_PROVIDER.lower() == "gemini":
+        logger.info("LLM provider: GEMINI")
+        return GeminiLLMClient()
+    logger.info("LLM provider: GROK")
+    return grok_llm_client
+
 class LLMRouter:
-    def __init__(self, api_registry, llm_client):
+    def __init__(self, api_registry, llm_client=None):
         self.registry = api_registry
-        self.llm = llm_client
+        if llm_client is None:
+            self.llm = get_llm_client()
+            logger.info(f"LLMRouter: Using auto-selected LLM client: {type(self.llm).__name__}")
+        else:
+            self.llm = llm_client
+            logger.info(f"LLMRouter: Using explicitly provided LLM client: {type(self.llm).__name__}")
 
     async def route(self, user_message: str, locale: str = None, chat_history: List[Dict[str, Any]] = None) -> Dict:
         """
@@ -85,8 +100,18 @@ Return JSON:
         logger.info(f"LLM prompt length: {len(prompt)} chars, {len(prompt.encode('utf-8'))} bytes")
         llm_response = await self.llm(prompt)
         logger.info(f"LLM response:\n{llm_response}")
+        
+        cleaned_response = llm_response.strip()
+        if cleaned_response.startswith('```json'):
+            cleaned_response = cleaned_response[7:]  
+        if cleaned_response.endswith('```'):
+            cleaned_response = cleaned_response[:-3]
+        cleaned_response = cleaned_response.strip()
+        
         try:
-            plan = json.loads(llm_response)
-        except Exception:
+            plan = json.loads(cleaned_response)
+        except Exception as e:
+            logger.error(f"Failed to parse LLM response as JSON: {e}")
+            logger.error(f"Cleaned response: {cleaned_response}")
             plan = {"error": "LLM returned invalid JSON", "raw": llm_response}
         return plan

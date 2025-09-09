@@ -1,9 +1,10 @@
 import logging
 from typing import Dict, Any, List
+from celestia_mcp.core.llm_router import get_llm_client
 
 class ResponseFormatter:
-    def __init__(self, llm_client):
-        self.llm = llm_client
+    def __init__(self, llm_client=None):
+        self.llm = llm_client or get_llm_client()
         self.logger = logging.getLogger("celestia_mcp.response_formatter")
 
     async def format(self, plan: Dict[str, Any], api_results: Dict[str, Any], locale: str = None, chat_history: List[Dict[str, Any]] = None) -> str:
