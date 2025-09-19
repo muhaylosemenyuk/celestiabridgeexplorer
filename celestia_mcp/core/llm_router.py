@@ -34,29 +34,68 @@ class LLMRouter:
         """
         chat_history = chat_history or []
         docs = self.registry.get_llm_docs()
+        
+        # Logging history that is passed to prompt
+        history_for_prompt = chat_history[-5:]
+        logger.info(f"LLM Router - History sent to prompt: {history_for_prompt}")
+        
         prompt = f"""
 You are an AI assistant for CelestiaBridge. Analyze the user query and select API endpoints to call.
 
-- Always answer in the language of the user's query.
-- All amounts in API results are in utia (micro-TIA).
-- If the user query mentions TIA, always convert TIA to utia for filtering and utia to TIA for display. 1 TIA = 1,000,000 utia.
-- Example: If the user asks for delegators with more than 1,000,000 TIA, filter for amount > 1_000_000_000_000 utia.
-- For Cosmos REST API endpoints with is_pagination = True, use 'pagination_aggregate' if the query requires aggregation over all data (e.g., top N, sum, unique, etc.).
-- For local endpoints (like /chain, /nodes) or non-paginated endpoints, always use a standard API call (do not use pagination_aggregate).
+RULES:
+- Always answer in the language of the user's query
+- Display amounts in TIA (never utia)
+- For Cosmos endpoints: convert TIA→utia for filtering (TIA * 1_000_000)
+- For local endpoints: use TIA directly
+- CRITICAL: Use ONLY field names from the endpoint documentation below
+- NEVER invent or guess field names - they must match exactly what's in the docs
+- For sorting/grouping: use exact field names from TABLE SCHEMA sections
+
+ENDPOINT SELECTION:
+- nodes: for node/geographic data
+- balances: for wallet balance data (use aggregations parameter for complex queries)
+- chain: for chain metrics
+- metrics: for performance metrics
+- releases: for software releases
+- Cosmos endpoints: for blockchain data
 
 Available endpoints:
 {docs}
 
 User query: {user_message}
-Chat context (last 5): {chat_history[-5:]}
+Chat context (last 5): {history_for_prompt}
 
-Example for standard local endpoint:
+Examples:
+
+Standard endpoint:
 {{
   "name": "chain",
   "parameters": {{}}
 }}
 
-Example for paginated Cosmos endpoint:
+Balance query with aggregation (use exact field names from docs):
+{{
+  "name": "balances",
+  "parameters": {{
+    "min_balance": 1000,
+    "order_by": "balance_tia",
+    "order_direction": "desc",
+    "aggregations": "[{{\"type\": \"count\"}}]",
+    "return_format": "aggregated"
+  }}
+}}
+
+Node query with grouping (use exact field names from docs):
+{{
+  "name": "nodes",
+  "parameters": {{
+    "group_by": "region",
+    "aggregations": "[{{\"type\": \"count\"}}]",
+    "return_format": "aggregated"
+  }}
+}}
+
+Cosmos endpoint with pagination:
 {{
   "name": "get_validator_delegations",
   "pagination_aggregate": {{
@@ -65,17 +104,11 @@ Example for paginated Cosmos endpoint:
     "item_path": "delegation_responses",
     "aggregate": "top",
     "aggregate_field": "balance.amount",
-    "top_n": 5,
-    "sort_desc": true,
-    "filter": {{
-      "field": "balance.amount",
-      "operator": ">",
-      "value": 1000000000000
-    }}
+    "top_n": 5
   }}
 }}
 
-Example for chaining endpoints:
+Chaining endpoints (use result from first call in second):
 [
   {{
     "name": "get_latest_block_height",

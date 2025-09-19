@@ -1,7 +1,7 @@
 from services.db import engine
 from sqlalchemy import text
 
-table_names = ['nodes', 'metrics', 'chain', 'releases']
+table_names = ['nodes', 'metrics', 'chain', 'releases', 'balance_history']
 
 with engine.connect() as conn:
     result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table';"))

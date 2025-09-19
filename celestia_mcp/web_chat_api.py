@@ -1,17 +1,28 @@
 import logging
+import sys
+import os
+
+# Add parent directory to path for imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("celestia_mcp.web_chat_api")
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from celestia_mcp.mcp_server import CelestiaMCP
+from celestia_mcp.core.llm_router import get_llm_client
+
 app = FastAPI()
-mcp = CelestiaMCP(None, local_api_url="http://localhost:8001")
+llm_client = get_llm_client()
+mcp = CelestiaMCP(llm_client, local_api_url="http://localhost:8002")
 
 @app.post("/chat")
 async def chat(request: Request):
     data = await request.json()
     user_message = data.get("message", "")
     user_id = data.get("user_id", "default")
+    logger.info(f"Web Chat API - Received message from user {user_id}: {user_message}")
     response = await mcp.call_tool("consult_celestia", user_message, user_id=user_id)
     return JSONResponse({"response": response})
 

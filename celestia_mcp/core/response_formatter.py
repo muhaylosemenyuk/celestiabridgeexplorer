@@ -7,21 +7,30 @@ class ResponseFormatter:
         self.llm = llm_client or get_llm_client()
         self.logger = logging.getLogger("celestia_mcp.response_formatter")
 
-    async def format(self, plan: Dict[str, Any], api_results: Dict[str, Any], locale: str = None, chat_history: List[Dict[str, Any]] = None) -> str:
+    async def format(self, plan: Dict[str, Any], api_results: Dict[str, Any], user_query: str = None, locale: str = None, chat_history: List[Dict[str, Any]] = None) -> str:
         chat_history = chat_history or []
+      
+        # Logging history that is passed to prompt
+        history_for_prompt = chat_history[-5:]
+        self.logger.info(f"Response Formatter - History sent to prompt: {history_for_prompt}")
+        self.logger.info(f"Response Formatter - User query: {user_query}")
+        
         prompt = f"""
 You are an AI assistant for CelestiaBridge. Format the response for the user based on the following:
-Always answer in the language of the user's query.
+Always answer in the language of the user's query from User query.
 
 - Write in a simple, human-friendly style.
 - Use short sentences and clear explanations.
 - Separate ideas into paragraphs.
 - Prefer bullet lists for facts, steps, or options.
 - Avoid excessive formality or technical jargon unless the user requests it.
-- If you see a balance in 'utia' (micro-TIA), and the value is greater than 1,000,000, always convert it to TIA (TIA = utia / 1_000_000) and show the result in TIA for user-friendly display.
+- IMPORTANT: Always display amounts in TIA, never in utia. Convert utia to TIA for display (TIA = utia / 1_000_000).
+- For all balance-related information, show values in TIA format for better readability.
 - **If the API results are empty or missing, do NOT invent or hallucinate data. Clearly tell the user that the information is unavailable or not found.**
 
-User chat context (last 5): {chat_history[-5:]}
+User query: {user_query or "No user query provided"}
+
+User chat context (last 5): {history_for_prompt}
 
 User intent and plan:
 {plan}

@@ -6,7 +6,7 @@ from services.paginated_aggregator import fetch_and_aggregate_paginated
 import re
 
 class APIExecutor:
-    def __init__(self, api_registry, local_api_url="http://localhost:8000"):
+    def __init__(self, api_registry, local_api_url="http://localhost:8002"):
         self.registry = api_registry
         self.local_api_url = local_api_url
         # Dynamically import cosmos_api.py
@@ -26,7 +26,7 @@ class APIExecutor:
 
     async def execute(self, endpoints: List[Dict[str, Any]]) -> Dict[str, Any]:
         results = {}
-        for ep in endpoints:
+        for i, ep in enumerate(endpoints):
             params = ep.get("parameters", {}).copy()
             # Substitute values from previous results
             for k, v in params.items():
@@ -40,7 +40,16 @@ class APIExecutor:
                         params[k] = ref_result
             # Call endpoint with updated parameters
             result = await self._call_endpoint({**ep, "parameters": params})
-            results[ep["name"]] = result
+            
+            # Create unique key for each endpoint call to avoid overwriting
+            endpoint_name = ep["name"]
+            if endpoint_name in results:
+                # If endpoint name already exists, create a list or use index
+                if not isinstance(results[endpoint_name], list):
+                    results[endpoint_name] = [results[endpoint_name]]
+                results[endpoint_name].append(result)
+            else:
+                results[endpoint_name] = result
         return results
 
     async def _call_endpoint(self, endpoint: Dict[str, Any]) -> Any:
@@ -64,7 +73,8 @@ class APIExecutor:
         # --- Standard logic ---
         if info.get("api_type") == "local":
             url = f"{self.local_api_url}{info['url']}"
-            async with httpx.AsyncClient() as client:
+            timeout = httpx.Timeout(30.0)  # 30 seconds timeout
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.get(url, params=params)
                 try:
                     return resp.json()

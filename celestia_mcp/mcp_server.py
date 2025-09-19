@@ -27,15 +27,23 @@ class CelestiaMCP(FastMCP):
         Universal AI assistant for CelestiaBridge. Accepts queries in any language and always answers in the language of the user's query.
         """
         history = self.chat_context.get(user_id, [])
+        logger.info(f"User {user_id} message: {user_message}")
+        logger.info(f"Chat history for user {user_id}: {len(history)} messages")
+        if history:
+            logger.info(f"Last 3 messages: {history[-3:]}")
+        
+        # If locale is not specified, use automatic detection through prompt
         plan = await self.llm_router.route(user_message, locale, history)
         endpoints = plan.get("endpoints", [])
         logger.info(f"LLM selected endpoints: {endpoints}")
         api_results = await self.api_executor.execute(endpoints)
         logger.info(f"API results: {api_results}")
-        response = await self.response_formatter.format(plan, api_results, locale, history)
+        response = await self.response_formatter.format(plan, api_results, user_message, locale, history)
+        
         # Update chat history
-        history.append({"q": user_message, "a": response})
+        history.append({"user": user_message, "assistant": response})
         self.chat_context[user_id] = history[-10:]
+        logger.info(f"Updated chat history for user {user_id}: {len(self.chat_context[user_id])} messages")
         return response
 
     async def call_tool(self, name, *args, **kwargs):

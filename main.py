@@ -10,6 +10,8 @@ from services.releases_import import import_releases_to_db
 from services.releases_export import export_releases_json
 from services.chain_export import export_chain_json
 from services.node_export import export_nodes_json
+from services.balance_import import import_balances_to_db
+from services.balance_export import export_balance_summary_json
 
 @click.group()
 def cli():
@@ -97,6 +99,34 @@ def export_nodes(out):
     js = export_nodes_json(out_path=out)
     if out:
         click.echo(f"Nodes exported to {out}")
+    else:
+        click.echo(js)
+
+@cli.command(name="import_balances")
+@click.option('--limit', default=None, type=int, help='Limit number of addresses to process (for testing)')
+def import_balances(limit):
+    """Import wallet balances from Cosmos API to database."""
+    import logging
+    
+    # Configure logging for console output
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler()  # Console output
+        ]
+    )
+    
+    result = import_balances_to_db(limit=limit)
+    click.echo(f"Balances imported: {result}")
+
+@cli.command(name="export_balances")
+@click.option('--out', default=None, help='File to save JSON (optional)')
+def export_balances(out):
+    """Export balance data as JSON."""
+    js = export_balance_summary_json(out_path=out)
+    if out:
+        click.echo(f"Balances exported to {out}")
     else:
         click.echo(js)
 
