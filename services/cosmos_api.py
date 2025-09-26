@@ -52,13 +52,7 @@ def get_wallet_addresses_count() -> Optional[int]:
     return None
 
 # --- Bank Module ---
-def get_balances(address: str) -> Optional[Dict[str, Any]]:
-    """
-    Returns all token balances for a given account address.
-    This endpoint returns paginated results. Use universal pagination for full data aggregation.
-    """
-    return make_cosmos_request(f"/cosmos/bank/v1beta1/balances/{address}", {})
-get_balances.is_pagination = True
+# get_balances removed - use local /balances endpoint instead
 
 # --- Base/Tendermint Module ---
 def get_latest_block_height() -> Optional[int]:
@@ -113,15 +107,15 @@ def get_delegator_validator_rewards(delegator_address: str, validator_address: s
     """
     return make_cosmos_request(f"/cosmos/distribution/v1beta1/delegators/{delegator_address}/rewards/{validator_address}")
 
-def get_delegator_validators(delegator_address: str) -> Optional[Dict[str, Any]]:
+def get_delegator_validators_for_rewards(delegator_address: str) -> Optional[Dict[str, Any]]:
     """
-    Returns a list of all validators a delegator is bonded to.
+    Returns a list of all validators a delegator is bonded to for rewards distribution.
 
     Parameters:
       - delegator_address (str): The bech32 address of the delegator.
 
     Response:
-      - validators (list): List of validator operator addresses.
+      - validators (list): List of validator operator addresses for rewards.
     """
     return make_cosmos_request(f"/cosmos/distribution/v1beta1/delegators/{delegator_address}/validators")
 
@@ -137,18 +131,6 @@ def get_delegator_withdraw_address(delegator_address: str) -> Optional[Dict[str,
     """
     return make_cosmos_request(f"/cosmos/distribution/v1beta1/delegators/{delegator_address}/withdraw_address")
 
-
-def get_validator_info(validator_address: str) -> Optional[Dict[str, Any]]:
-    """
-    Returns distribution information for a specific validator.
-
-    Parameters:
-      - validator_address (str): The bech32 address of the validator.
-
-    Response:
-      - validator (dict): Validator distribution info (commission, outstanding rewards, etc).
-    """
-    return make_cosmos_request(f"/cosmos/distribution/v1beta1/validators/{validator_address}")
 
 def get_validator_commission(validator_address: str) -> Optional[Dict[str, Any]]:
     """
@@ -173,25 +155,6 @@ def get_validator_outstanding_rewards(validator_address: str) -> Optional[Dict[s
       - rewards (dict): Outstanding rewards object.
     """
     return make_cosmos_request(f"/cosmos/distribution/v1beta1/validators/{validator_address}/outstanding_rewards")
-
-def get_validator_slashes(validator_address: str, start_height: Optional[int] = None, end_height: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    """
-    Returns all slashing events for a specific validator within an optional height range.
-
-    Parameters:
-      - validator_address (str): The bech32 address of the validator.
-      - start_height (int, optional): Start block height (inclusive).
-      - end_height (int, optional): End block height (inclusive).
-
-    Response:
-      - slashes (list): List of slashing event objects.
-    """
-    params = {}
-    if start_height:
-        params["starting_height"] = start_height
-    if end_height:
-        params["ending_height"] = end_height
-    return make_cosmos_request(f"/cosmos/distribution/v1beta1/validators/{validator_address}/slashes", params)
 
 
 # --- Governance Module v1beta1 ---
@@ -224,13 +187,7 @@ def get_proposal_v1beta1(proposal_id: int) -> Optional[Dict[str, Any]]:
 
 
 # --- Staking Module ---
-def get_delegations(delegator_addr: str) -> Optional[Dict[str, Any]]:
-    """
-    Returns a paginated list of delegations for a specific delegator.
-    This endpoint returns paginated results. Use universal pagination for full data aggregation.
-    """
-    return make_cosmos_request(f"/cosmos/staking/v1beta1/delegations/{delegator_addr}", {})
-get_delegations.is_pagination = True
+# get_delegations removed - use local /delegations endpoint instead
 
 def get_redelegations(delegator_addr: str, src_validator: Optional[str] = None, dst_validator: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
@@ -246,77 +203,5 @@ def get_redelegations(delegator_addr: str, src_validator: Optional[str] = None, 
 get_redelegations.is_pagination = True
 
 
-def get_delegator_validators(delegator_addr: str) -> Optional[Dict[str, Any]]:
-    """
-    Returns a paginated list of validators for a specific delegator.
-    This endpoint returns paginated results. Use universal pagination for full data aggregation.
-    """
-    return make_cosmos_request(f"/cosmos/staking/v1beta1/delegators/{delegator_addr}/validators", {})
-get_delegator_validators.is_pagination = True
-
-def get_delegator_validator(delegator_addr: str, validator_addr: str) -> Optional[Dict[str, Any]]:
-    """
-    Returns details for a specific validator delegated to by a delegator.
-
-    Parameters:
-      - delegator_addr (str): The bech32 address of the delegator.
-      - validator_addr (str): The bech32 address of the validator.
-
-    Response:
-      - validator (dict): Validator object.
-    """
-    return make_cosmos_request(f"/cosmos/staking/v1beta1/delegators/{delegator_addr}/validators/{validator_addr}")
-
-def get_staking_pool() -> Optional[Dict[str, Any]]:
-    """
-    Returns the current staking pool information.
-
-    Response:
-      - pool (dict): Staking pool object with fields like 'bonded_tokens', 'not_bonded_tokens', etc.
-    """
-    return make_cosmos_request("/cosmos/staking/v1beta1/pool")
-
-def get_validators(status: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """
-    Returns a paginated list of validators.
-    This endpoint returns paginated results. Use universal pagination for full data aggregation.
-    """
-    params = {}
-    if status:
-        params["status"] = status
-    return make_cosmos_request("/cosmos/staking/v1beta1/validators", params)
-get_validators.is_pagination = True
-
-def get_validator(validator_addr: str) -> Optional[Dict[str, Any]]:
-    """
-    Returns details for a specific validator by operator address.
-
-    Parameters:
-      - validator_addr (str): The bech32 operator address of the validator.
-
-    Response:
-      - validator (dict): Validator object with fields like 'operator_address', 'description', 'jailed', 'status', etc.
-    """
-    return make_cosmos_request(f"/cosmos/staking/v1beta1/validators/{validator_addr}")
-
-def get_validator_delegations(validator_addr: str) -> Optional[Dict[str, Any]]:
-    """
-    Returns a paginated list of delegations to a specific validator.
-    This endpoint returns paginated results. Use universal pagination for full data aggregation.
-    """
-    return make_cosmos_request(f"/cosmos/staking/v1beta1/validators/{validator_addr}/delegations", {})
-get_validator_delegations.is_pagination = True
-
-def get_validator_delegation(validator_addr: str, delegator_addr: str) -> Optional[Dict[str, Any]]:
-    """
-    Returns details of a specific delegation from a delegator to a validator.
-
-    Parameters:
-      - validator_addr (str): The bech32 operator address of the validator.
-      - delegator_addr (str): The bech32 address of the delegator.
-
-    Response:
-      - delegation_response (dict): Delegation object.
-    """
-    return make_cosmos_request(f"/cosmos/staking/v1beta1/validators/{validator_addr}/delegations/{delegator_addr}")
+# get_validator, get_delegator_validators_for_staking, get_delegator_validator, get_validator_info, get_validator_slashes, get_validator_delegations and get_validator_delegation removed - use local /validators and /delegations endpoints instead
 

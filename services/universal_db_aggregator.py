@@ -31,7 +31,9 @@ def aggregate_db_data(
     order_by: Optional[Dict[str, str]] = None,
     limit: Optional[int] = None,
     offset: Optional[int] = None,
-    return_format: str = "list"
+    return_format: str = "list",
+    base_query = None,
+    join_fields: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Universal function for database data aggregation.
@@ -81,13 +83,21 @@ def aggregate_db_data(
             ]
         )
     """
-    logger.info(f"[START] DB Aggregation for {model_class.__tablename__}")
-    logger.info(f"Filters: {filters}, Group by: {group_by}, Aggregations: {aggregations}")
     
     session = SessionLocal()
     try:
         # Create base query
-        query = session.query(model_class)
+        if base_query is not None:
+            query = base_query
+        elif join_fields:
+            # Create JOIN query with additional fields
+            query = _create_join_query(session, model_class, join_fields)
+        else:
+            query = session.query(model_class)
+        
+        # Apply is_latest filter for historical tables (unless history is explicitly needed)
+        if _is_historical_table(model_class) and not _needs_history(filters):
+            query = query.filter(model_class.is_latest == True)
         
         # Apply filters
         if filters:
@@ -106,17 +116,24 @@ def aggregate_db_data(
         if has_aggregations or has_grouping:
             # Aggregated query
             query = _apply_group_by_and_aggregations(query, model_class, group_by, aggregations)
+            
+            # Apply sorting and pagination to aggregated query
+            if order_by:
+                query = _apply_order_by(query, model_class, order_by)
+            if offset:
+                query = query.offset(offset)
+            if limit:
+                query = query.limit(limit)
+            
             results = query.all()
             processed_results = _process_aggregated_results(results, group_by, aggregations)
             
             # Special handling for count_only with aggregation
             if return_format == "count_only" and aggregations:
-                logger.info(f"Count only with aggregations: {processed_results}")
                 # If there's only count aggregation, return its value
                 for agg in aggregations:
                     if agg.get("type") == "count":
                         if processed_results and "count" in processed_results[0]:
-                            logger.info(f"Returning count: {processed_results[0]['count']}")
                             return {"total": processed_results[0]["count"]}
                         break
         else:
@@ -135,7 +152,6 @@ def aggregate_db_data(
         return _format_result(processed_results, return_format, limit, offset)
         
     except Exception as e:
-        logger.error(f"Error in DB aggregation: {e}")
         return {"error": str(e), "results": [], "count": 0}
     finally:
         session.close()
@@ -145,7 +161,6 @@ def _apply_filters(query, model_class: Type, filters: Dict[str, Any]):
     """Apply filters to query"""
     for field, value in filters.items():
         if not hasattr(model_class, field):
-            logger.warning(f"Field {field} not found in {model_class.__tablename__}")
             continue
         
         # Skip None values
@@ -245,11 +260,13 @@ def _apply_order_by(query, model_class: Type, order_by: Dict[str, str]):
             else:
                 query = query.order_by(column.asc())
         else:
-            # Maybe this is an aggregated field
+            # This is likely an aggregated field (like sum_amount_tia, count, etc.)
+            # Use text() to handle aggregated field names properly
+            from sqlalchemy import text
             if direction.lower() == "desc":
-                query = query.order_by(desc(field))
+                query = query.order_by(text(f"{field} DESC"))
             else:
-                query = query.order_by(asc(field))
+                query = query.order_by(text(f"{field} ASC"))
     
     return query
 
@@ -257,7 +274,6 @@ def _apply_order_by(query, model_class: Type, order_by: Dict[str, str]):
 def _process_aggregated_results(results, group_by: Optional[List[str]], aggregations: Optional[List[Dict[str, str]]]):
     """Process aggregated results"""
     processed_results = []
-    logger.info(f"Processing aggregated results: {len(results)} results, group_by={group_by}, aggregations={aggregations}")
     
     for result in results:
         result_dict = {}
@@ -300,39 +316,72 @@ def _process_regular_results(results, model_class: Type):
     """Process regular results"""
     processed_results = []
     
-    for result in results:
+    for i, result in enumerate(results):
         try:
             if hasattr(result, 'to_dict'):
                 processed_results.append(result.to_dict())
             else:
-                # Create dictionary from object attributes
-                result_dict = {}
-                for column in model_class.__table__.columns:
-                    value = getattr(result, column.name, None)
-                    # Convert datetime and date to strings
-                    if isinstance(value, (datetime, date)):
-                        result_dict[column.name] = value.isoformat()
-                    elif hasattr(value, '__float__') and not isinstance(value, (int, str, bool)):
-                        # Convert Decimal to float
-                        result_dict[column.name] = float(value)
-                    else:
-                        result_dict[column.name] = value
+                result_dict = _extract_result_data(result, model_class)
                 processed_results.append(result_dict)
         except Exception as e:
-            logger.error(f"Error processing result: {e}")
             processed_results.append({"error": "Could not process result"})
     
-    logger.info(f"Processed aggregated results: {processed_results}")
     return processed_results
+
+
+def _extract_result_data(result, model_class: Type) -> Dict[str, Any]:
+    """Extract data from result object (Row, tuple, or model instance)"""
+    result_dict = {}
+    
+    # Handle SQLAlchemy Row objects (from JOIN queries)
+    if hasattr(result, '_asdict'):
+        row_dict = result._asdict()
+        
+        for key, value in row_dict.items():
+            if key == model_class.__name__:
+                # This is the main model object - extract its fields
+                for column in model_class.__table__.columns:
+                    field_value = getattr(value, column.name, None)
+                    result_dict[column.name] = _convert_value(field_value)
+            else:
+                # Additional fields from JOIN
+                result_dict[key] = _convert_value(value)
+    
+    # Handle tuple results (legacy support)
+    elif isinstance(result, tuple) and len(result) > 1:
+        main_obj = result[0]
+        for column in model_class.__table__.columns:
+            value = getattr(main_obj, column.name, None)
+            result_dict[column.name] = _convert_value(value)
+        
+        # Add additional fields from tuple
+        for i in range(1, len(result)):
+            result_dict[f"field_{i}"] = _convert_value(result[i])
+    
+    # Handle regular model instances
+    else:
+        for column in model_class.__table__.columns:
+            value = getattr(result, column.name, None)
+            result_dict[column.name] = _convert_value(value)
+    
+    return result_dict
+
+def _convert_value(value):
+    """Convert value to appropriate format"""
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    elif hasattr(value, '__float__') and not isinstance(value, (int, str, bool)):
+        # Convert Decimal to float
+        return float(value)
+    else:
+        return value
 
 
 def _format_result(processed_results: List[Dict], return_format: str, limit: Optional[int], offset: Optional[int]):
     """Format result"""
     count = len(processed_results)
-    logger.info(f"Formatting result: return_format={return_format}, count={count}")
     
     if return_format == "count_only":
-        logger.info(f"Returning count_only: {count}")
         # If there's only one result with count, return its value
         if count == 1 and processed_results and "count" in processed_results[0]:
             return {"total": processed_results[0]["count"]}
@@ -435,3 +484,74 @@ def get_statistics(
         ],
         return_format="aggregated"
     )
+
+
+def _is_historical_table(model_class: Type) -> bool:
+    """
+    Check if table is historical (has is_latest column).
+    
+    Args:
+        model_class: SQLAlchemy model class
+        
+    Returns:
+        bool: True if table is historical
+    """
+    return hasattr(model_class, 'is_latest')
+
+
+def _needs_history(filters: Optional[Dict[str, Any]]) -> bool:
+    """
+    Check if history is explicitly needed (e.g., date filters).
+    
+    Args:
+        filters: Filters dictionary
+        
+    Returns:
+        bool: True if history is needed
+    """
+    if not filters:
+        return False
+    
+    # If there are date filters - history is needed
+    date_fields = ['date', 'created_at', 'updated_at']
+    for field in date_fields:
+        if field in filters:
+            return True
+    
+    return False
+
+
+def _create_join_query(session, model_class: Type, join_fields: Dict[str, Any]):
+    """
+    Create JOIN query with additional fields.
+    
+    Args:
+        session: Database session
+        model_class: Main model class
+        join_fields: Dict with join configuration
+            {
+                'join_model': JoinModelClass,
+                'join_condition': join_condition,
+                'fields': [{'field': 'field_name', 'label': 'label_name'}]
+            }
+    """
+    join_model = join_fields['join_model']
+    join_condition = join_fields['join_condition']
+    fields = join_fields.get('fields', [])
+    
+    # Start with main model
+    query = session.query(model_class)
+    
+    # Add JOIN
+    query = query.join(join_model, join_condition)
+    
+    # Add additional fields
+    for field_config in fields:
+        field_name = field_config['field']
+        label_name = field_config.get('label', field_name)
+        
+        if hasattr(join_model, field_name):
+            field = getattr(join_model, field_name)
+            query = query.add_columns(field.label(label_name))
+    
+    return query

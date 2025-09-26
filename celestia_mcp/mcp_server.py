@@ -34,9 +34,16 @@ class CelestiaMCP(FastMCP):
         
         # If locale is not specified, use automatic detection through prompt
         plan = await self.llm_router.route(user_message, locale, history)
-        endpoints = plan.get("endpoints", [])
-        logger.info(f"LLM selected endpoints: {endpoints}")
-        api_results = await self.api_executor.execute(endpoints)
+        
+        # Check if this is a sequential request
+        if plan.get("sequential"):
+            logger.info(f"LLM selected sequential request with {len(plan.get('steps', []))} steps")
+            api_results = await self.api_executor.execute(plan)
+        else:
+            endpoints = plan.get("endpoints", [])
+            logger.info(f"LLM selected endpoints: {endpoints}")
+            api_results = await self.api_executor.execute(endpoints)
+        
         logger.info(f"API results: {api_results}")
         response = await self.response_formatter.format(plan, api_results, user_message, locale, history)
         

@@ -11,24 +11,17 @@ from pydantic import BaseModel
 from services.chain_export import export_chain_json
 from services.releases_export import export_releases_json
 from services.universal_db_aggregator import aggregate_db_data
+from services.db import SessionLocal
 from models.node import Node
 from models.balance import BalanceHistory
 from models.metric import Metric
+from models.validator import Validator
+from models.delegation import Delegation
 
-# Logging setup
 logger = logging.getLogger(__name__)
 
-# Valid fields for models
-VALID_FIELDS = {
-    "nodes": ["id", "peer_id", "ip", "city", "region", "country", "lat", "lon", "org"],
-    "balance_history": ["id", "address", "date", "balance_tia"],
-    "metrics": ["id", "metric_name", "value", "timestamp", "instance"],
-    "chain": ["id", "height", "timestamp", "block_time", "tx_count"]
-}
-
-def validate_field(model_name: str, field: str) -> bool:
-    """Check if field exists in model"""
-    return field in VALID_FIELDS.get(model_name, [])
+# Import field validation from filter configs
+from filter_configs.filter_configs import get_valid_fields, validate_field
 
 app = FastAPI(
     title="CelestiaBridge Explorer API",
@@ -58,6 +51,8 @@ app = FastAPI(
     AVAILABLE TABLES:
     - nodes: Celestia network nodes with geographic data
     - balance_history: Historical wallet balances
+    - validators: Validator data (status, tokens, missed blocks, uptime, etc.)
+    - delegations: Delegation data with validator information
     - chain: Chain metrics and statistics
     - metrics: Performance metrics
     - releases: Software releases
@@ -152,53 +147,17 @@ def get_nodes(
     return_format: str = Query("list", description="Return format: list, aggregated, count_only")
 ):
     """
-    Returns a list of Celestia network nodes with advanced filtering, grouping, and aggregation.
+    Returns Celestia network nodes with filtering, grouping, and aggregation.
 
-    TABLE SCHEMA (nodes):
-      - id (int): Primary key
-      - peer_id (str): Unique peer identifier
-      - ip (str): IP address
-      - city (str): City name
-      - region (str): Region name
-      - country (str): Country code (e.g., "US", "DE")
-      - lat (float): Latitude coordinate
-      - lon (float): Longitude coordinate
-      - org (str): Organization/provider name
+    FIELDS: id, peer_id, ip, city, region, country, lat, lon, org
 
-    Parameters:
-      - skip (int): Number of records to skip (for pagination).
-      - limit (int): Maximum number of records to return (for pagination, max 1000).
-      - country (str, optional): Filter by country code (e.g., "DE", "US").
-      - region (str, optional): Filter by region (e.g., "Europe", "Asia").
-      - city (str, optional): Filter by city name.
-      - org (str, optional): Filter by organization/provider name.
-      - group_by (str, optional): Comma-separated fields to group by (e.g., "country,region").
-      - aggregations (str, optional): JSON string with aggregations. Examples:
-        * Count: [{"type": "count"}]
-        * Multiple: [{"type": "count"}, {"type": "sum", "field": "field_name"}]
-        * Types: count, sum, avg, min, max
-      - order_by (str, optional): Field to sort by.
-      - order_direction (str, optional): Sort direction (asc, desc).
-      - return_format (str): Return format (list, aggregated, count_only).
+    FILTERS: country, region, city, org
 
-    USAGE EXAMPLES:
-      # Get all nodes
-      GET /nodes?limit=100
-      
-      # Filter by country
-      GET /nodes?country=US&limit=50
-      
-      # Group by country and count
-      GET /nodes?group_by=country&aggregations=[{"type":"count"}]&order_by=count&order_direction=desc
-      
-      # Get nodes by region with coordinates
-      GET /nodes?region=Europe&order_by=lat&order_direction=asc
-
-    Response:
-      - results (List): List of node objects or aggregated results.
-      - count (int): Number of results returned.
-      - limit (int): Limit used for pagination.
-      - offset (int): Offset used for pagination.
+    EXAMPLES:
+    - All nodes: ?limit=100
+    - Filter by country: ?country=US&limit=50
+    - Group by country: ?group_by=country&aggregations=[{"type":"count"}]&order_by=count&order_direction=desc
+    - By region: ?region=Europe&order_by=lat&order_direction=asc
     """
     try:
         # Build filters
@@ -219,7 +178,7 @@ def get_nodes(
             # Validate grouping fields
             for field in group_by_list:
                 if not validate_field("nodes", field):
-                    return {"error": f"Invalid field '{field}' for grouping. Valid fields: {VALID_FIELDS['nodes']}"}
+                    return {"error": f"Invalid field '{field}' for grouping. Valid fields: {get_valid_fields('nodes')}"}
         
         # Parse aggregations
         parsed_aggregations = None
@@ -233,7 +192,7 @@ def get_nodes(
         order_by_dict = None
         if order_by:
             if not validate_field("nodes", order_by):
-                return {"error": f"Invalid field '{order_by}' for sorting. Valid fields: {VALID_FIELDS['nodes']}"}
+                return {"error": f"Invalid field '{order_by}' for sorting. Valid fields: {get_valid_fields('nodes')}"}
             order_by_dict = {order_by: order_direction}
         
         # Use universal aggregator
@@ -252,28 +211,15 @@ def get_nodes(
         return {"error": str(e)}
 
 @app.get("/chain", response_model=dict, tags=["Chain"])
-def get_chain(skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)):
+def get_chain(skip: int = Query(0, ge=0), limit: int = Query(1, ge=1, le=1000)):
     """
-    Returns a paginated list of Celestia chain metrics.
+    Returns Celestia chain metrics.
 
-    Parameters:
-      - skip (int): Number of records to skip (for pagination).
-      - limit (int): Maximum number of records to return (for pagination, max 1000).
+    FIELDS: timestamp, staked_tokens, missed_blocks, inflation, apr, price, delegators, annual_provisions, supply
 
-    Response:
-      - total (int): Total number of records.
-      - skip (int): Number of skipped records.
-      - limit (int): Limit used for pagination.
-      - items (List[ChainOut]): List of chain metric objects, each with:
-          - timestamp (str, optional)
-          - staked_tokens (float, optional)
-          - missed_blocks (int, optional)
-          - inflation (float, optional)
-          - apr (float, optional)
-          - price (float, optional)  # TIA token price here!
-          - delegators (int, optional)
-          - annual_provisions (float, optional)
-          - supply (float, optional)
+    EXAMPLES:
+    - Recent metrics: ?limit=10&order_by=timestamp&order_direction=desc
+    - All metrics: ?limit=1000
     """
     chain = json.loads(export_chain_json(limit=10000))  # get all, then paginate
     return paginate(chain, skip, limit)
@@ -289,21 +235,13 @@ def get_aggregated_metrics(
     """
     Returns aggregated metrics per instance for the last N hours with filtering.
 
-    Parameters:
-      - metric_name (str): Name of the metric to aggregate (e.g. "latency", "uptime").
-      - hours (int): Number of hours to aggregate over (default 24, max 168).
-      - instance (str, optional): Filter by specific instance.
-      - min_value (float, optional): Minimum metric value filter.
-      - max_value (float, optional): Maximum metric value filter.
+    FIELDS: instance, avg_value, min_value, max_value, count
 
-    Response:
-      - results (List): List of aggregated metric objects, each with:
-          - instance (str): Instance name or ID.
-          - avg_value (float): Average value.
-          - min_value (float): Minimum value.
-          - max_value (float): Maximum value.
-          - count (int): Number of samples.
-      - count (int): Number of results returned.
+    FILTERS: metric_name, hours, instance, min_value, max_value
+
+    EXAMPLES:
+    - Latency metrics: ?metric_name=latency&hours=24
+    - Uptime by instance: ?metric_name=uptime&instance=server1&min_value=95.0
     """
     # Calculate time filter
     time_threshold = datetime.utcnow() - timedelta(hours=hours)
@@ -339,23 +277,40 @@ def get_aggregated_metrics(
     return result
 
 @app.get("/releases", response_model=dict, tags=["Releases"])
-def get_releases(skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)):
+def get_releases(
+    skip: int = Query(0, ge=0, description="Number of records to skip (for pagination)"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
+    # Filters
+    version: Optional[str] = Query(None, description="Filter by exact version"),
+    status: Optional[str] = Query(None, description="Filter by release status"),
+    # Version range filters
+    min_version: Optional[float] = Query(None, ge=0, description="Minimum version number"),
+    max_version: Optional[float] = Query(None, ge=0, description="Maximum version number"),
+    # Date filters
+    created_after: Optional[str] = Query(None, description="Filter records created after this date (YYYY-MM-DD)"),
+    created_before: Optional[str] = Query(None, description="Filter records created before this date (YYYY-MM-DD)"),
+    # Grouping
+    group_by: Optional[str] = Query(None, description="Comma-separated fields to group by"),
+    # Aggregations
+    aggregations: Optional[str] = Query(None, description="JSON string with aggregations: [{'type': 'count'}, {'type': 'sum', 'field': 'field_name'}]"),
+    # Sorting
+    order_by: Optional[str] = Query("published_at", description="Field to sort by"),
+    order_direction: Optional[str] = Query("desc", description="Sort direction (asc, desc)"),
+    # Return format
+    return_format: str = Query("list", description="Return format: list, aggregated, count_only")
+):
     """
-    Returns a paginated list of Celestia software releases.
+    Returns Celestia software releases.
 
-    Parameters:
-      - skip (int): Number of records to skip (for pagination).
-      - limit (int): Maximum number of records to return (for pagination, max 1000).
+    FIELDS: version, published_at, announce_str, deadline_str
 
-    Response:
-      - total (int): Total number of releases.
-      - skip (int): Number of skipped records.
-      - limit (int): Limit used for pagination.
-      - items (List[ReleaseOut]): List of release objects, each with:
-          - version (str)
-          - published_at (str, optional)
-          - announce_str (str, optional)
-          - deadline_str (str, optional)
+    FILTERS: version, status, min_version, max_version, created_after, created_before
+
+    EXAMPLES:
+    - Recent releases: ?limit=10&order_by=published_at&order_direction=desc
+    - All releases: ?limit=1000
+    - Filter by version: ?version=1.0.0&limit=10
+    - Version range: ?min_version=1.0&max_version=2.0&limit=50
     """
     releases = json.loads(export_releases_json())
     return paginate(releases, skip, limit)
@@ -365,12 +320,13 @@ def get_releases(skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=10
 def get_balances(
     # Pagination
     skip: int = Query(0, ge=0, description="Number of records to skip (for pagination)"), 
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
+    limit: int = Query(10, ge=1, le=1000, description="Maximum number of records to return"),
     # Filters
     target_date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
     min_balance: Optional[float] = Query(None, description="Minimum balance in TIA"),
     max_balance: Optional[float] = Query(None, description="Maximum balance in TIA"),
     address: Optional[str] = Query(None, description="Specific wallet address"),
+    include_zero_balances: bool = Query(False, description="Include addresses with zero balances"),
     # Grouping
     group_by: Optional[str] = Query(None, description="Comma-separated fields to group by (e.g., 'date,address')"),
     # Aggregations
@@ -382,52 +338,17 @@ def get_balances(
     return_format: str = Query("list", description="Return format: list, aggregated, count_only")
 ):
     """
-    Returns balance data with advanced filtering, grouping, and aggregation.
+    Returns balance data with filtering, grouping, and aggregation.
 
-    TABLE SCHEMA (balance_history):
-      - id (int): Primary key
-      - address (str): Wallet address (255 chars max)
-      - date (date): Date in YYYY-MM-DD format
-      - balance_tia (decimal): Balance in TIA tokens (20,6 precision)
-      - created_at (datetime): Record creation timestamp
+    FIELDS: id, address, date, balance_tia
 
-    Parameters:
-      - skip (int): Number of records to skip (for pagination).
-      - limit (int): Maximum number of records to return (for pagination, max 1000).
-      - target_date (str, optional): Date in YYYY-MM-DD format.
-      - min_balance (float, optional): Minimum balance in TIA.
-      - max_balance (float, optional): Maximum balance in TIA.
-      - address (str, optional): Specific wallet address.
-      - group_by (str, optional): Comma-separated fields to group by (e.g., "date,address").
-      - aggregations (str, optional): JSON string with aggregations. Examples:
-        * Count: [{"type": "count"}]
-        * Detailed: [{"type": "count"}, {"type": "sum", "field": "balance_tia"}, {"type": "avg", "field": "balance_tia"}]
-        * Types: count, sum, avg, min, max
-      - order_by (str, optional): Field to sort by (default: balance_tia).
-      - order_direction (str, optional): Sort direction (asc, desc).
-      - return_format (str): Return format (list, aggregated, count_only).
+    FILTERS: address, target_date, min_balance, max_balance
 
-    USAGE EXAMPLES:
-      # Get top 100 wallets by balance
-      GET /balances?limit=100&order_by=balance_tia&order_direction=desc
-      
-      # Get wallets with balance > 1000 TIA
-      GET /balances?min_balance=1000&limit=50
-      
-      # Get balance statistics for specific date
-      GET /balances?target_date=2024-01-01&aggregations=[{"type":"count"},{"type":"sum","field":"balance_tia"},{"type":"avg","field":"balance_tia"}]&return_format=aggregated
-      
-      # Get specific wallet history
-      GET /balances?address=celestia1abc...&order_by=date&order_direction=desc
-      
-      # Group by date and count wallets
-      GET /balances?group_by=date&aggregations=[{"type":"count"}]&order_by=date&order_direction=desc
-
-    Response:
-      - results (List): List of balance objects or aggregated results.
-      - count (int): Number of results returned.
-      - limit (int): Limit used for pagination.
-      - offset (int): Offset used for pagination.
+    EXAMPLES:
+    - Top wallets: ?limit=100&order_by=balance_tia&order_direction=desc
+    - Filter by balance: ?min_balance=1000&limit=50
+    - Date statistics: ?target_date=2024-01-01&aggregations=[{"type":"count"},{"type":"sum","field":"balance_tia"}]
+    - Group by date: ?group_by=date&aggregations=[{"type":"count"}]&order_by=date&order_direction=desc
     """
     try:
         # Build filters
@@ -439,10 +360,23 @@ def get_balances(
         if max_balance is not None:
             filters["balance_tia"] = {**filters.get("balance_tia", {}), "lte": max_balance}
         if address:
-            filters["address"] = address
+            # Handle both string and dict formats for address
+            if isinstance(address, dict) and "in" in address:
+                # Multiple addresses with 'in' filter
+                filters["address"] = address
+            else:
+                # Single address or comma-separated string
+                if isinstance(address, str) and "," in address:
+                    # Split comma-separated addresses and use 'in' filter
+                    addresses = [addr.strip() for addr in address.split(",") if addr.strip()]
+                    if addresses:
+                        filters["address"] = {"in": addresses}
+                else:
+                    # Single address - use exact match
+                    filters["address"] = address
         
-        # By default filter out zero balances
-        if min_balance is None or min_balance <= 0:
+        # By default filter out zero balances unless explicitly requested
+        if not include_zero_balances and (min_balance is None or min_balance <= 0):
             filters["balance_tia"] = {**filters.get("balance_tia", {}), "gt": 0}
         
         # Parse grouping
@@ -451,8 +385,8 @@ def get_balances(
             group_by_list = [field.strip() for field in group_by.split(",")]
             # Validate grouping fields
             for field in group_by_list:
-                if not validate_field("balance_history", field):
-                    return {"error": f"Invalid field '{field}' for grouping. Valid fields: {VALID_FIELDS['balance_history']}"}
+                if not validate_field("balances", field):
+                    return {"error": f"Invalid field '{field}' for grouping. Valid fields: {get_valid_fields('balances')}"}
         
         # Parse aggregations
         parsed_aggregations = None
@@ -463,8 +397,8 @@ def get_balances(
                 return {"error": "Invalid JSON in aggregations parameter"}
         
         # Build sorting
-        if not validate_field("balance_history", order_by):
-            return {"error": f"Invalid field '{order_by}' for sorting. Valid fields: {VALID_FIELDS['balance_history']}"}
+        if not validate_field("balances", order_by):
+            return {"error": f"Invalid field '{order_by}' for sorting. Valid fields: {get_valid_fields('balances')}"}
         order_by_dict = {order_by: order_direction}
         
         # Use universal aggregator
@@ -483,6 +417,307 @@ def get_balances(
         return {"error": str(e)}
 
 
+# ===== VALIDATORS ENDPOINTS =====
+
+@app.get("/validators", response_model=dict, tags=["Validators"])
+def get_validators(
+    # Pagination
+    skip: int = Query(0, ge=0, description="Number of records to skip (for pagination)"), 
+    limit: int = Query(10, ge=1, le=1000, description="Maximum number of records to return"),
+    
+    # Filters - Basic identifiers
+    operator_address: Optional[str] = Query(None, description="Filter by operator address (partial match)"),
+    consensus_address: Optional[str] = Query(None, description="Filter by consensus address (partial match)"),
+    
+    # Filters - Validator description
+    moniker: Optional[str] = Query(None, description="Filter by moniker (partial match)"),
+    
+    # Filters - Status and state
+    status: Optional[str] = Query(None, description="Filter by validator status (e.g., 'BOND_STATUS_BONDED')"),
+    jailed: Optional[bool] = Query(None, description="Filter by jailed status"),
+    
+    # Filters - Tokens
+    min_tokens: Optional[float] = Query(None, ge=0, description="Minimum tokens amount"),
+    max_tokens: Optional[float] = Query(None, ge=0, description="Maximum tokens amount"),
+    
+    # Filters - Commission
+    commission_rate: Optional[float] = Query(None, ge=0, le=1, description="Exact commission rate (0.0-1.0)"),
+    min_commission_rate: Optional[float] = Query(None, ge=0, le=1, description="Minimum commission rate"),
+    max_commission_rate: Optional[float] = Query(None, ge=0, le=1, description="Maximum commission rate"),
+    
+    # Filters - Consensus metrics
+    min_voting_power: Optional[float] = Query(None, ge=0, description="Minimum voting power"),
+    max_voting_power: Optional[float] = Query(None, ge=0, description="Maximum voting power"),
+    
+    # Filters - Uptime metrics
+    min_uptime: Optional[float] = Query(None, ge=0, le=100, description="Minimum uptime percentage"),
+    max_uptime: Optional[float] = Query(None, ge=0, le=100, description="Maximum uptime percentage"),
+    min_missed_blocks: Optional[int] = Query(None, ge=0, description="Minimum missed blocks counter"),
+    max_missed_blocks: Optional[int] = Query(None, ge=0, description="Maximum missed blocks counter"),
+    
+    # Filters - Delegation statistics
+    min_total_delegations: Optional[int] = Query(None, ge=0, description="Minimum total delegations"),
+    max_total_delegations: Optional[int] = Query(None, ge=0, description="Maximum total delegations"),
+    min_total_delegators: Optional[int] = Query(None, ge=0, description="Minimum total delegators"),
+    max_total_delegators: Optional[int] = Query(None, ge=0, description="Maximum total delegators"),
+    
+    
+    # Grouping
+    group_by: Optional[str] = Query(None, description="Comma-separated fields to group by (e.g., 'status,jailed')"),
+    
+    # Aggregations
+    aggregations: Optional[str] = Query(None, description="JSON string with aggregations: [{'type': 'count'}, {'type': 'sum', 'field': 'field_name'}]"),
+    
+    # Sorting
+    order_by: Optional[str] = Query("voting_power", description="Field to sort by"),
+    order_direction: Optional[str] = Query("desc", description="Sort direction (asc, desc)"),
+    
+    # Return format
+    return_format: str = Query("list", description="Return format: list, aggregated, count_only")
+):
+    """
+    Returns Celestia validators with filtering, grouping, and aggregation.
+
+    FIELDS: id, operator_address, moniker, status, jailed, tokens, commission_rate, voting_power, uptime_percent, missed_blocks_counter, total_delegations, total_delegators
+
+    FILTERS: moniker, status, jailed, min_tokens, max_tokens, min_commission_rate, max_commission_rate, min_uptime, max_uptime, min_voting_power, max_voting_power, min_missed_blocks, max_missed_blocks, min_total_delegators, max_total_delegators
+
+    EXAMPLES:
+    - Top validators: ?limit=10&order_by=tokens&order_direction=desc
+    - Filter by status: ?status=BOND_STATUS_BONDED&min_tokens=1000000
+    - Group and count: ?group_by=status&aggregations=[{"type":"count"}]
+    - Commission range: ?min_commission_rate=0.05&max_commission_rate=0.1
+    - High uptime: ?min_uptime=99.0&order_by=voting_power&order_direction=desc
+    - Missed blocks: ?min_missed_blocks=0&max_missed_blocks=10&order_by=missed_blocks_counter&order_direction=asc
+    - Validator missed blocks: ?operator_address=celestiavaloper1abc&order_by=missed_blocks_counter
+    """
+    try:
+        # Use unified filter system
+        from services.filter_builder import build_filters
+        from filter_configs.filter_configs import get_filter_config
+        
+        # Build filters using configuration
+        config = get_filter_config('validators')
+        filters = build_filters(Validator, locals(), config)
+        
+        # Parse grouping
+        group_by_list = None
+        if group_by:
+            group_by_list = [field.strip() for field in group_by.split(",")]
+            # Validate grouping fields
+            for field in group_by_list:
+                if not validate_field("validators", field):
+                    return {"error": f"Invalid field '{field}' for grouping. Valid fields: {get_valid_fields('validators')}"}
+        
+        # Parse aggregations
+        parsed_aggregations = None
+        if aggregations:
+            try:
+                parsed_aggregations = json.loads(aggregations)
+            except json.JSONDecodeError:
+                return {"error": "Invalid JSON in aggregations parameter"}
+        
+        # Build sorting
+        if order_by and not validate_field("validators", order_by):
+            return {"error": f"Invalid field '{order_by}' for sorting. Valid fields: {get_valid_fields('validators')}"}
+        order_by_dict = {order_by: order_direction} if order_by else None
+        
+        # Add custom filter for None values when sorting by fields that can have None
+        if order_by and order_by in ['uptime_percent', 'voting_power']:
+            from services.filter_builder import FilterBuilder
+            if filters is None:
+                filters = {}
+            filter_builder = FilterBuilder(Validator)
+            # Add existing filters to the builder
+            for key, value in filters.items():
+                if isinstance(value, dict):
+                    for op, val in value.items():
+                        if op == 'like':
+                            filter_builder.add_like(key, val)
+                        elif op == 'ne':
+                            filter_builder.add_custom(key, {'ne': val})
+                        else:
+                            filter_builder.add_custom(key, {op: val})
+                else:
+                    filter_builder.add_exact(key, value)
+            filter_builder.add_custom(order_by, {'ne': None})
+            filters = filter_builder.get_filters()
+        
+        # Use universal aggregator
+        return aggregate_db_data(
+            model_class=Validator,
+            filters=filters if filters else None,
+            group_by=group_by_list,
+            aggregations=parsed_aggregations,
+            order_by=order_by_dict,
+            limit=limit,
+            offset=skip,
+            return_format=return_format
+        )
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ===== DELEGATIONS ENDPOINTS =====
+
+@app.get("/delegations", response_model=dict, tags=["Delegations"])
+def get_delegations(
+    # Pagination
+    skip: int = Query(0, ge=0, description="Number of records to skip (for pagination)"), 
+    limit: int = Query(10, ge=1, le=1000, description="Maximum number of records to return"),
+    
+    # Filters - Basic identifiers
+    delegator_address: Optional[str] = Query(None, description="Filter by delegator address (partial match)"),
+    validator_address: Optional[str] = Query(None, description="Filter by validator address (partial match)"),
+    
+    # Filters - Amounts
+    min_amount: Optional[float] = Query(None, ge=0, description="Minimum delegation amount in TIA"),
+    max_amount: Optional[float] = Query(None, ge=0, description="Maximum delegation amount in TIA"),
+    
+    # Filters - Dates
+    target_date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format"),
+    min_date: Optional[str] = Query(None, description="Minimum date in YYYY-MM-DD format"),
+    max_date: Optional[str] = Query(None, description="Maximum date in YYYY-MM-DD format"),
+    
+    # Include validator info
+    include_validator_info: bool = Query(False, description="Include validator information (moniker, status, etc.)"),
+    
+    # Filter options
+    include_zero_delegations: bool = Query(False, description="Include zero delegations (undelegated records)"),
+    
+    # Filters - Validator info (only when include_validator_info=True)
+    validator_moniker: Optional[str] = Query(None, description="Filter by validator moniker (partial match)"),
+    validator_status: Optional[str] = Query(None, description="Filter by validator status"),
+    validator_jailed: Optional[bool] = Query(None, description="Filter by validator jailed status"),
+    
+    # Grouping
+    group_by: Optional[str] = Query(None, description="Comma-separated fields to group by (e.g., 'delegator_address,validator_address')"),
+    
+    # Aggregations
+    aggregations: Optional[str] = Query(None, description="JSON string with aggregations: [{'type': 'count'}, {'type': 'sum', 'field': 'amount_tia'}]"),
+    
+    # Sorting
+    order_by: Optional[str] = Query("amount_tia", description="Field to sort by (valid: id, delegator_address, validator_address, amount_tia, date, validator_moniker, validator_tokens, validator_status)"),
+    order_direction: Optional[str] = Query("desc", description="Sort direction (asc, desc)"),
+    
+    # Return format
+    return_format: str = Query("list", description="Return format: list, aggregated, count_only")
+):
+    """
+    Returns delegation records with filtering, grouping, and aggregation.
+
+    🚀 AUTOMATIC LATEST RECORDS: By default, returns only the latest delegation records (is_latest=True) unless date filters are specified.
+
+    FIELDS: id, delegator_address, validator_address, amount_tia, date, is_latest
+
+    FILTERS: delegator_address, validator_address, min_amount, max_amount, target_date, min_date, max_date, include_validator_info, validator_moniker, validator_status, validator_jailed
+
+    EXAMPLES:
+    - Top delegations: ?limit=10&order_by=amount_tia&order_direction=desc
+    - Filter by delegator: ?delegator_address=celestia1abc
+    - Date range: ?min_date=2024-01-01&max_date=2024-01-31
+    - With validator info: ?include_validator_info=true&validator_moniker=Staker
+    - Group by validator: ?group_by=validator_address&aggregations=[{"type":"count"},{"type":"sum","field":"amount_tia"}]
+    """
+    
+    try:
+        from models.delegation import Delegation
+        from models.validator import Validator
+        from services.filter_builder import build_filters
+        from filter_configs.filter_configs import get_filter_config
+        
+        # Build filters using configuration
+        config = get_filter_config('delegations')
+        filters = build_filters(Delegation, locals(), config)
+        
+        # Add validator filters if include_validator_info is True
+        if include_validator_info:
+            validator_filters = {}
+            if validator_moniker:
+                validator_filters['moniker'] = {'like': validator_moniker}
+            if validator_status:
+                validator_filters['status'] = validator_status
+            if validator_jailed is not None:
+                validator_filters['jailed'] = validator_jailed
+            
+            if validator_filters:
+                filters['validator'] = validator_filters
+        
+        # Parse grouping
+        group_by_list = None
+        if group_by:
+            group_by_list = [field.strip() for field in group_by.split(",")]
+            # Validate grouping fields
+            for field in group_by_list:
+                if not validate_field("delegations", field):
+                    return {"error": f"Invalid field '{field}' for grouping. Valid fields: {get_valid_fields('delegations')}"}
+        
+        # Parse aggregations
+        parsed_aggregations = None
+        if aggregations:
+            try:
+                parsed_aggregations = json.loads(aggregations)
+            except json.JSONDecodeError:
+                return {"error": "Invalid JSON in aggregations parameter"}
+        
+        # Build sorting
+        if order_by and not validate_field("delegations", order_by):
+            return {"error": f"Invalid field '{order_by}' for sorting. Valid fields: {get_valid_fields('delegations')}"}
+        order_by_dict = {order_by: order_direction} if order_by else None
+        
+        # Use universal aggregator
+        if include_validator_info:
+            # Configure JOIN fields for validator info
+            join_fields = {
+                'join_model': Validator,
+                'join_condition': Delegation.validator_id == Validator.id,
+                'fields': [
+                    {'field': 'moniker', 'label': 'validator_moniker'},
+                    {'field': 'status', 'label': 'validator_status'},
+                    {'field': 'tokens', 'label': 'validator_tokens'},
+                    {'field': 'commission_rate', 'label': 'validator_commission_rate'},
+                    {'field': 'uptime_percent', 'label': 'validator_uptime_percent'}
+                ]
+            }
+            
+            # Add validator filters to main filters
+            if validator_moniker:
+                filters = filters or {}
+                filters['validator_moniker'] = {'like': validator_moniker}
+            if validator_status:
+                filters = filters or {}
+                filters['validator_status'] = validator_status
+            if validator_jailed is not None:
+                filters = filters or {}
+                filters['validator_jailed'] = validator_jailed
+            
+            return aggregate_db_data(
+                model_class=Delegation,
+                filters=filters,
+                group_by=group_by_list,
+                aggregations=parsed_aggregations,
+                order_by=order_by_dict,
+                limit=limit,
+                offset=skip,
+                return_format=return_format,
+                join_fields=join_fields
+            )
+        else:
+            # Simple query without JOIN
+            return aggregate_db_data(
+                model_class=Delegation,
+                filters=filters if filters else None,
+                group_by=group_by_list,
+                aggregations=parsed_aggregations,
+                order_by=order_by_dict,
+                limit=limit,
+                offset=skip,
+                return_format=return_format
+            )
+            
+    except Exception as e:
+        return {"error": str(e)}
 
 
 if __name__ == "__main__":

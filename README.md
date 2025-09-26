@@ -6,11 +6,13 @@ CelestiaBridge is a modular backend platform for collecting, processing, aggrega
 
 **Key Features:**
 - Collects metrics from otel metrics, APIs, CSV, GitHub Releases
+- Validator and delegation data collection and analysis
+- Advanced filtering and analytics capabilities
 - Unified pipeline for data processing and normalization
 - Stores data in a structured database (PostgreSQL/SQLite)
 - Aggregation and export to JSON for dashboards/BI/analytics
-- **Multilingual support (11 languages)**
-- **Real-time data analysis through natural language queries**
+- Multilingual support
+- Real-time data analysis through natural language queries
 - Convenient CLI for import, export, and data viewing
 - Flexible configuration via `.env` and `config/`
 - Modular, clean, and testable codebase
@@ -36,7 +38,7 @@ CelestiaBridge is a modular backend platform for collecting, processing, aggrega
    ```bash
    pip install -r requirements.txt
    ```
-3. Copy `.env.example` to `.env` and edit as needed.
+3. Configure environment variables in `.env` file as needed.
 
 ### CLI
 
@@ -74,7 +76,13 @@ python main.py <command> [options]
 - **import_balances** — Import wallet balances from Cosmos API into the `balance_history` table.
   - Example: `python main.py import_balances`
 
-- **show_table <table>** — Show the first 10 records from the selected table (`nodes`, `metrics`, `chain`, `releases`, `balance_history`).
+- **import_validators** — Import validator data from Cosmos API into the `validators` table.
+  - Example: `python main.py import_validators`
+
+- **import_delegations** — Import delegation data from Cosmos API into the `delegations` table.
+  - Example: `python main.py import_delegations`
+
+- **show_table <table>** — Show the first 10 records from the selected table (`nodes`, `metrics`, `chain`, `releases`, `balance_history`, `validators`, `delegations`).
   - Example: `python main.py show_table nodes`
 
 - **export_agg <metric_name> [--hours N] [--out FILE]** — Export an aggregated metric (e.g., latency) for the specified period to JSON.
@@ -91,6 +99,12 @@ python main.py <command> [options]
 
 - **export_balances [--out FILE]** — Export balance data to JSON.
   - Example: `python main.py export_balances --out balances.json`
+
+- **export_validators [--out FILE]** — Export validator data to JSON.
+  - Example: `python main.py export_validators --out validators.json`
+
+- **export_delegations [--out FILE]** — Export delegation data to JSON.
+  - Example: `python main.py export_delegations --out delegations.json`
 
 #### Help
 To see all available commands and options:
@@ -124,6 +138,8 @@ python main.py <command> --help
   - `metric.py` — Time-series metrics model (`Metric`)
   - `release.py` — GitHub releases model (`Release`)
   - `balance.py` — Wallet balances model (`BalanceHistory`)
+  - `validator.py` — Validator model (`Validator`)
+  - `delegation.py` — Delegation model (`Delegation`)
 
 - `services/` — Business logic, integration, data processing
   - `db.py` — Database connection and initialization
@@ -140,6 +156,11 @@ python main.py <command> --help
   - `geo_import.py` — Geographic data import
   - `releases_import.py` — GitHub releases import
   - `releases_export.py` — GitHub releases export
+  - `validator_import.py` — Validator data import
+  - `validator_export.py` — Validator data export
+  - `delegation_import.py` — Delegation data import
+  - `delegation_export.py` — Delegation data export
+  - `filter_builder.py` — Universal filter builder
 
 - `celestia_mcp/` — AI Assistant (MCP) system
   - `mcp_server.py` — Main MCP server class
@@ -152,6 +173,13 @@ python main.py <command> --help
     - `llm_router.py` — LLM routing and query planning
     - `response_formatter.py` — Response formatting and localization
 
+- `utils/` — Utility modules
+  - `decorators.py` — API decorators for filters and validation
+  - `endpoint_helpers.py` — Endpoint helper functions
+
+- `filter_configs/` — Filter configurations
+  - `filter_configs.py` — Universal filter configurations for all endpoints
+
 ---
 
 ## Database Tables Structure
@@ -163,6 +191,8 @@ The database contains the following tables, each corresponding to a SQLAlchemy m
 - **chain** (`Chain` model): Chain-level metrics including stake, delegators, inflation, and block information
 - **releases** (`Release` model): GitHub release data for Celestia software versions
 - **balance_history** (`BalanceHistory` model): Historical wallet balances with delta storage (only changes are saved)
+- **validators** (`Validator` model): Validator information including staking data, commission rates, uptime metrics
+- **delegations** (`Delegation` model): Historical delegation data with delta storage for efficient tracking
 
 ### Model Relationships
 - All models inherit from `Base` (SQLAlchemy declarative base)
@@ -171,7 +201,7 @@ The database contains the following tables, each corresponding to a SQLAlchemy m
 
 ### Database Utility: check_db.py
 
-The `check_db.py` utility prints the list of tables in the current database and shows the number of records in each main table (`nodes`, `metrics`, `chain`, `releases`, `balance_history`).
+The `check_db.py` utility prints the list of tables in the current database and shows the number of records in each main table (`nodes`, `metrics`, `chain`, `releases`, `balance_history`, `validators`, `delegations`).
 
 **Usage:**
 ```bash
@@ -215,9 +245,11 @@ result = aggregate_db_data(
 ```
 
 **API Integration:**
-The aggregator is used by 3 API endpoints to provide consistent, powerful querying capabilities:
+The aggregator is used by multiple API endpoints to provide consistent, powerful querying capabilities:
 - `/nodes` endpoint uses `Node` model
 - `/balances` endpoint uses `BalanceHistory` model  
+- `/validators` endpoint uses `Validator` model
+- `/delegations` endpoint uses `Delegation` model
 - `/metrics/aggregate` endpoint uses `Metric` model
 
 Other endpoints (`/chain`, `/releases`) use legacy export functions for backward compatibility.
@@ -233,6 +265,8 @@ flowchart TD
         A2["Geo CSV"]
         A3["Chain/Validators API"]
         A4["GitHub Releases API"]
+        A5["Validators API"]
+        A6["Delegations API"]
     end
 
     subgraph DataSources
@@ -240,6 +274,8 @@ flowchart TD
         B2["read_geo_csv"]
         B3["get_staked_tokens, get_validators_with_delegators, ..."]
         B4["get_github_releases"]
+        B5["get_validators_data"]
+        B6["get_delegations_data"]
     end
 
     subgraph ImportServices["Import Services"]
@@ -248,6 +284,8 @@ flowchart TD
         C3["import_chain_to_db"]
         C4["import_releases_to_db"]
         C5["import_balances_to_db"]
+        C6["import_validators_to_db"]
+        C7["import_delegations_to_db"]
     end
 
     subgraph DB[Database]
@@ -257,6 +295,8 @@ flowchart TD
         D3["chain (Chain)"]
         D4["releases (Release)"]
         D5["balance_history (BalanceHistory)"]
+        D6["validators (Validator)"]
+        D7["delegations (Delegation)"]
     end
 
     subgraph ExportServices["Export Services"]
@@ -265,7 +305,9 @@ flowchart TD
         E3["export_nodes_json"]
         E4["export_releases_json"]
         E5["export_balance_summary_json"]
-        E6["universal_db_aggregator"]
+        E6["export_validators_json"]
+        E7["export_delegations_json"]
+        E8["universal_db_aggregator"]
     end
 
     F1["Aggregated metrics JSON"]
@@ -273,6 +315,8 @@ flowchart TD
     F3["Nodes JSON"]
     F4["Releases JSON"]
     F5["Balance JSON"]
+    F6["Validators JSON"]
+    F7["Delegations JSON"]
 
     A1 --> B1 --> C1 --> D1
     A2 --> B2 --> C2 --> D2
@@ -280,15 +324,21 @@ flowchart TD
     A3 --> B3 --> C3 --> D5
     A4 --> B4 --> C4 --> D4
     A3 --> B3 --> C5 --> D5
+    A5 --> B5 --> C6 --> D6
+    A6 --> B6 --> C7 --> D7
 
     D1 -.-> E1 --> F1
-    D1 -.-> E6
+    D1 -.-> E8
     D2 -.-> E3 --> F3
-    D2 -.-> E6
+    D2 -.-> E8
     D3 -.-> E2 --> F2
     D4 -.-> E4 --> F4
     D5 -.-> E5 --> F5
-    D5 -.-> E6
+    D5 -.-> E8
+    D6 -.-> E6 --> F6
+    D6 -.-> E8
+    D7 -.-> E7 --> F7
+    D7 -.-> E8
 ```
 
 ---
@@ -299,10 +349,11 @@ flowchart TD
 - All parsers have a unified interface: return `list[dict]` or `dict`, handle errors via try/except and logging.
 - No hardcoded paths, keys, or constants — everything is managed via `config.py` and environment variables.
 - All business logic, aggregation, and integration is in `services/`.
-- All data models (`Node`, `Chain`, `Metric`, `Release`, `BalanceHistory`) are in `models/`.
+- All data models (`Node`, `Chain`, `Metric`, `Release`, `BalanceHistory`, `Validator`, `Delegation`) are in `models/`.
 - All models inherit from `Base` and are designed for independent operation.
 - All database queries use the universal aggregator (`services/universal_db_aggregator.py`) for consistency and power.
 - All API endpoints provide advanced filtering, grouping, aggregation, and sorting capabilities.
+- Advanced filter system with universal filter builder and decorators for consistent API behavior.
 - All dependencies are managed only via `requirements.txt`.
 - All documentation and docstrings are in English.
 - All error handling is performed via try/except and logging. Critical errors are logged but do not crash the pipeline (except for unrecoverable network errors).
@@ -345,6 +396,12 @@ A DevOps engineer wants to automate the collection and aggregation of Celestia n
 **Advanced Example:**
 An analyst wants to analyze wallet distribution by country. They use the API: `GET /balances?group_by=country&aggregations=[{"type":"count"},{"type":"sum","field":"balance_tia"}]&return_format=aggregated` to get aggregated balance statistics grouped by country.
 
+**Validator Analysis Example:**
+A researcher wants to analyze validator performance. They use: `GET /validators?group_by=status&aggregations=[{"type":"count"},{"type":"avg","field":"uptime_percent"}]&return_format=aggregated` to get validator statistics by status.
+
+**Delegation Analysis Example:**
+An analyst wants to find top delegators. They use: `GET /delegations?group_by=delegator_address&aggregations=[{"type":"sum","field":"amount_tia"}]&order_by=sum_amount_tia&order_direction=desc&limit=20` to get top delegators by total amount.
+
 **Model Usage Example:**
 A developer wants to query network nodes by region. They use the universal aggregator with the `Node` model: `GET /nodes?group_by=region&aggregations=[{"type":"count"}]&return_format=aggregated` to get node counts per region.
 
@@ -363,7 +420,7 @@ CelestiaBridge provides an open HTTP API to access all output data in JSON forma
    ```
 2. Start the server:
    ```bash
-   uvicorn api_main:app --reload
+   uvicorn api_main:app --reload --port 8002
    ```
    The API will be available at http://127.0.0.1:8002
 
@@ -447,6 +504,8 @@ The API will be available at http://localhost:8002
 - `GET /metrics/aggregate?metric_name=...&hours=...` — aggregated metrics
 - `GET /releases` — releases (with pagination)
 - `GET /balances` — universal balance endpoint with filtering, grouping, and aggregation
+- `GET /validators` — validator data with advanced filtering, grouping, and aggregation
+- `GET /delegations` — delegation data with advanced filtering, grouping, and aggregation
 - `GET /health` — API health check
 
 #### Pagination Parameters
@@ -468,6 +527,20 @@ The API will be available at http://localhost:8002
 - Sort by: `id`, `address`, `date`, `balance_tia`
 - Return formats: `list`, `aggregated`, `count_only`
 
+**Validators Endpoint (`/validators`):**
+- Filter by: `status`, `jailed`, `min_tokens`, `max_tokens`, `min_commission`, `max_commission`
+- Group by: `status`, `country`, `region` (or any field)
+- Aggregations: `count`, `sum`, `avg`, `min`, `max` on `tokens`, `commission_rate`, `uptime_percent`
+- Sort by: `tokens`, `commission_rate`, `uptime_percent`, `voting_power`
+- Return formats: `list`, `aggregated`, `count_only`
+
+**Delegations Endpoint (`/delegations`):**
+- Filter by: `delegator_address`, `validator_address`, `min_amount`, `max_amount`, `date`
+- Group by: `delegator_address`, `validator_address`, `date` (or any field)
+- Aggregations: `count`, `sum`, `avg`, `min`, `max` on `amount_tia`
+- Sort by: `amount_tia`, `date`, `delegator_address`, `validator_address`
+- Return formats: `list`, `aggregated`, `count_only`
+
 #### Example Requests
 ```bash
 # Get top 100 nodes by country
@@ -484,6 +557,15 @@ curl "http://localhost:8002/balances?target_date=2024-01-01&aggregations=[{\"typ
 
 # Group nodes by country and count them
 curl "http://localhost:8002/nodes?group_by=country&aggregations=[{\"type\":\"count\"}]&return_format=aggregated"
+
+# Get top validators by voting power
+curl "http://localhost:8002/validators?order_by=voting_power&order_direction=desc&limit=10"
+
+# Get delegations for specific validator
+curl "http://localhost:8002/delegations?validator_address=celestiavaloper1...&limit=50"
+
+# Get validator statistics by status
+curl "http://localhost:8002/validators?group_by=status&aggregations=[{\"type\":\"count\"},{\"type\":\"sum\",\"field\":\"tokens\"}]&return_format=aggregated"
 ```
 
 ---
@@ -493,14 +575,14 @@ curl "http://localhost:8002/nodes?group_by=country&aggregations=[{\"type\":\"cou
 ### How to Run the Assistant (MCP/Web Chat)
 
 ```bash
-# 1. Start the local API (on a separate port, e.g., 8002)
-uvicorn api_main:app --port 8002
+# 1. Start the local API (on port 8002)
+uvicorn api_main:app --reload --port 8002
 
-# 2. Start the MCP server (assistant)
+# 2. Start the MCP server (assistant) on port 8003
 uvicorn celestia_mcp.web_chat_api:app --reload --port 8003
 ```
 - The MCP server will be available at http://127.0.0.1:8003
-- Web chat for testing: http://127.0.0.1:8003
+- Web chat interface: http://127.0.0.1:8003
 
 ### Capabilities
 - Accepts natural language queries in any language (automatic language detection).
@@ -517,7 +599,6 @@ uvicorn celestia_mcp.web_chat_api:app --reload --port 8003
   - Describe parameters and response structure in the docstring in English.
 - For local API:
   - Add the endpoint to FastAPI with a detailed English docstring.
-- Optionally update documentation in `cosmos_api_summary.md`.
 - The assistant will automatically discover new endpoints via the registry mechanism.
 
 ### Assistant Workflow Diagram
@@ -539,7 +620,7 @@ flowchart TD
 
 > "Show the top 5 delegators for validator X with a balance greater than 1,000,000 TIA"
 
-- The LLM generates a plan: selects the endpoint, adds a filter, aggregation, and parameter substitution.
+- The LLM generates a plan: selects the endpoint, adds filters, aggregation, and parameter substitution.
 - The APIExecutor executes all steps, passing results between queries as needed.
 - The answer is returned in a user-friendly format, in the user's language.
 

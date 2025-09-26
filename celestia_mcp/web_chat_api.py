@@ -64,7 +64,7 @@ def index():
             function updateHistory() {
                 document.getElementById('history').innerHTML = history.join('<br><br>');
             }
-            // Додаємо відправку через Enter (Shift+Enter — новий рядок)
+            // Add Enter key submission (Shift+Enter for new line)
             document.getElementById('msg').addEventListener('keydown', function(e) {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();

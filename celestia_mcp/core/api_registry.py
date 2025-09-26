@@ -15,6 +15,11 @@ class APIRegistry:
         app = getattr(module, "app", None)
         if not app:
             return
+        
+        # Store FastAPI app description
+        if hasattr(app, 'description'):
+            self.app_description = app.description
+        
         for route in getattr(app, "routes", []):
             if hasattr(route, "endpoint"):
                 endpoint_name = route.path.replace("/", "_").strip("_")
@@ -42,6 +47,11 @@ class APIRegistry:
 
     def get_llm_docs(self) -> str:
         docs = []
+        
+        # Add FastAPI app description first
+        if hasattr(self, 'app_description'):
+            docs.append(f"API DESCRIPTION:\n{self.app_description}\n")
+        
         for name, info in self.endpoints.items():
             params_str = ", ".join(info["parameters"])
             docs.append(f"- {name} ({info['api_type']}): {info['description']}\n  Parameters: {params_str}")

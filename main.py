@@ -12,6 +12,10 @@ from services.chain_export import export_chain_json
 from services.node_export import export_nodes_json
 from services.balance_import import import_balances_to_db
 from services.balance_export import export_balance_summary_json
+from services.validator_import import ValidatorImporter
+from services.validator_export import ValidatorExporter
+from services.delegation_import import import_delegations_to_db
+from services.delegation_export import DelegationExporter
 
 @click.group()
 def cli():
@@ -129,6 +133,329 @@ def export_balances(out):
         click.echo(f"Balances exported to {out}")
     else:
         click.echo(js)
+
+
+# ===== VALIDATOR COMMANDS =====
+
+@cli.command(name="import_validators")
+def import_validators():
+    """Import all validators from Celestia API into the database using parallel processing."""
+    click.echo("Starting validator import with parallel processing...")
+    
+    importer = ValidatorImporter()
+    stats = importer.import_all_validators()
+    
+    click.echo(f"Import completed:")
+    click.echo(f"  Total processed: {stats['total_processed']}")
+    click.echo(f"  Successful: {stats['successful']}")
+    click.echo(f"  Failed: {stats['failed']}")
+    
+    if stats['errors']:
+        click.echo("Errors:")
+        for error in stats['errors'][:5]:  # Show first 5 errors
+            click.echo(f"  - {error}")
+        if len(stats['errors']) > 5:
+            click.echo(f"  ... and {len(stats['errors']) - 5} more errors")
+
+
+@cli.command(name="export_validators")
+@click.option('--format', 'export_format', type=click.Choice(['json', 'csv']), default='json', help='Export format')
+@click.option('--out', default=None, help='Output file (optional)')
+def export_validators(export_format, out):
+    """Export validators data."""
+    click.echo(f"Exporting validators in {export_format.upper()} format...")
+    
+    exporter = ValidatorExporter()
+    
+    if export_format == 'json':
+        output_file = exporter.export_to_json(output_file=out)
+    else:  # csv
+        output_file = exporter.export_to_csv(output_file=out)
+    
+    click.echo(f"Validators exported to: {output_file}")
+
+
+# ===== DELEGATION COMMANDS =====
+
+@cli.command(name="import_delegations")
+@click.option('--limit', default=None, type=int, help='Limit number of validators to process (for testing)')
+def import_delegations(limit):
+    """Import delegation data from Cosmos API to database."""
+    import logging
+    
+    # Configure logging for console output
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler()  # Console output
+        ]
+    )
+    
+    result = import_delegations_to_db(limit=limit)
+    click.echo(f"Delegations imported: {result}")
+
+
+@cli.command(name="export_delegations")
+@click.option('--format', 'export_format', type=click.Choice(['json', 'csv']), default='json', help='Export format')
+@click.option('--out', default=None, help='Output file (optional)')
+def export_delegations(export_format, out):
+    """Export delegation data."""
+    click.echo(f"Exporting delegations in {export_format.upper()} format...")
+    
+    exporter = DelegationExporter()
+    
+    if export_format == 'json':
+        output_file = exporter.export_to_json(output_file=out)
+    else:  # csv
+        output_file = exporter.export_to_csv(output_file=out)
+    
+    click.echo(f"Delegations exported to: {output_file}")
+
+
+@cli.command(name="delegation_stats")
+def delegation_stats():
+    """Show delegation statistics."""
+    import logging
+    logging.getLogger().setLevel(logging.ERROR)
+    _show_delegation_stats()
+
+
+@cli.command(name="validator_stats")
+def validator_stats():
+    """Show validator statistics."""
+    import logging
+    logging.getLogger().setLevel(logging.ERROR)
+    _show_validator_stats()
+
+
+@cli.command(name="balance_stats")
+def balance_stats():
+    """Show balance statistics."""
+    import logging
+    logging.getLogger().setLevel(logging.ERROR)
+    _show_balance_stats()
+
+
+@cli.command(name="all_stats")
+def all_stats():
+    """Show statistics for all tables."""
+    import logging
+    logging.getLogger().setLevel(logging.ERROR)
+    
+    click.echo("=" * 60)
+    click.echo("📊 CELESTIA BRIDGE EXPLORER - COMPREHENSIVE STATISTICS")
+    click.echo("=" * 60)
+    
+    # Delegation statistics
+    click.echo("\n🔗 DELEGATION STATISTICS")
+    click.echo("-" * 30)
+    _show_delegation_stats()
+    
+    # Validator statistics
+    click.echo("\n🏛️ VALIDATOR STATISTICS")
+    click.echo("-" * 30)
+    _show_validator_stats()
+    
+    # Balance statistics
+    click.echo("\n💰 BALANCE STATISTICS")
+    click.echo("-" * 30)
+    _show_balance_stats()
+    
+    click.echo("\n" + "=" * 60)
+    click.echo("✅ Statistics generation completed!")
+    click.echo("=" * 60)
+
+
+def _show_delegation_stats():
+    """Internal function to show delegation statistics."""
+    exporter = DelegationExporter()
+    stats = exporter.get_delegation_statistics()
+    
+    # Extract total statistics
+    total_stats = stats.get('total_statistics', {})
+    total_results = total_stats.get('results', [])
+    
+    if total_results:
+        total_count = total_results[0].get('count', 0)
+        total_amount = total_results[0].get('sum_amount_tia', 0) or 0
+        avg_amount = total_results[0].get('avg_amount_tia', 0) or 0
+        max_amount = total_results[0].get('max_amount_tia', 0) or 0
+        min_amount = total_results[0].get('min_amount_tia', 0) or 0
+        
+        click.echo("Delegation Statistics:")
+        click.echo(f"  📊 Total delegations: {total_count:,}")
+        click.echo(f"  💰 Total amount: {float(total_amount):,.2f} TIA")
+        click.echo(f"  📈 Average delegation: {float(avg_amount):,.2f} TIA")
+        click.echo(f"  🔝 Largest delegation: {float(max_amount):,.2f} TIA")
+        click.echo(f"  🔻 Smallest delegation: {float(min_amount):,.6f} TIA")
+        click.echo(f"  👥 Top delegators: {len(stats.get('top_delegators', []))} records")
+        click.echo(f"  🏛️ Top validators: {len(stats.get('top_validators', []))} records")
+        click.echo(f"  📅 Daily statistics: {len(stats.get('date_statistics', []))} records")
+    else:
+        click.echo("No delegation statistics available.")
+
+
+def _show_validator_stats():
+    """Internal function to show validator statistics."""
+    from services.universal_db_aggregator import aggregate_db_data
+    from models.validator import Validator
+    
+    # Get validator statistics
+    stats = aggregate_db_data(
+        model_class=Validator,
+        aggregations=[
+            {"type": "count"},
+            {"type": "sum", "field": "tokens"},
+            {"type": "avg", "field": "tokens"},
+            {"type": "max", "field": "tokens"},
+            {"type": "min", "field": "tokens"},
+            {"type": "sum", "field": "voting_power"},
+            {"type": "avg", "field": "uptime_percent"}
+        ],
+        return_format="aggregated"
+    )
+    
+    # Get status distribution
+    status_stats = aggregate_db_data(
+        model_class=Validator,
+        group_by=["status"],
+        aggregations=[{"type": "count"}],
+        return_format="list"
+    )
+    
+    # Get jailed vs active
+    jailed_stats = aggregate_db_data(
+        model_class=Validator,
+        group_by=["jailed"],
+        aggregations=[{"type": "count"}],
+        return_format="list"
+    )
+    
+    total_results = stats.get('results', [])
+    if total_results:
+        result = total_results[0]
+        total_count = result.get('count', 0)
+        total_tokens = result.get('sum_tokens', 0)
+        avg_tokens = result.get('avg_tokens', 0)
+        max_tokens = result.get('max_tokens', 0)
+        min_tokens = result.get('min_tokens', 0)
+        total_voting_power = result.get('sum_voting_power', 0)
+        avg_uptime = result.get('avg_uptime_percent', 0)
+        
+        click.echo("Validator Statistics:")
+        click.echo(f"  🏛️ Total validators: {total_count:,}")
+        click.echo(f"  💰 Total tokens: {float(total_tokens):,.2f} TIA")
+        click.echo(f"  📈 Average tokens: {float(avg_tokens):,.2f} TIA")
+        click.echo(f"  🔝 Largest stake: {float(max_tokens):,.2f} TIA")
+        click.echo(f"  🔻 Smallest stake: {float(min_tokens):,.2f} TIA")
+        click.echo(f"  ⚡ Total voting power: {float(total_voting_power):,.0f}")
+        click.echo(f"  📊 Average uptime: {float(avg_uptime):.2f}%")
+        
+        # Status distribution
+        status_results = status_stats.get('results', [])
+        if status_results:
+            click.echo("  📋 Status distribution:")
+            for status in status_results:
+                status_name = status.get('status', 'Unknown')
+                count = status.get('count', 0)
+                click.echo(f"    - {status_name}: {count}")
+        
+        # Jailed vs Active
+        jailed_results = jailed_stats.get('results', [])
+        if jailed_results:
+            click.echo("  🔒 Jailed status:")
+            for jailed in jailed_results:
+                is_jailed = "Jailed" if jailed.get('jailed') else "Active"
+                count = jailed.get('count', 0)
+                click.echo(f"    - {is_jailed}: {count}")
+    else:
+        click.echo("No validator statistics available.")
+
+
+def _show_balance_stats():
+    """Internal function to show balance statistics."""
+    from services.universal_db_aggregator import aggregate_db_data
+    from models.balance import BalanceHistory
+    
+    # Get balance statistics
+    stats = aggregate_db_data(
+        model_class=BalanceHistory,
+        aggregations=[
+            {"type": "count"},
+            {"type": "sum", "field": "balance_tia"},
+            {"type": "avg", "field": "balance_tia"},
+            {"type": "max", "field": "balance_tia"},
+            {"type": "min", "field": "balance_tia"}
+        ],
+        return_format="aggregated"
+    )
+    
+    # Get balance by date
+    date_stats = aggregate_db_data(
+        model_class=BalanceHistory,
+        group_by=["date"],
+        aggregations=[
+            {"type": "count"},
+            {"type": "sum", "field": "balance_tia"}
+        ],
+        order_by={"date": "desc"},
+        limit=10,
+        return_format="list"
+    )
+    
+    # Get top addresses by balance
+    top_addresses = aggregate_db_data(
+        model_class=BalanceHistory,
+        group_by=["address"],
+        aggregations=[
+            {"type": "count"},
+            {"type": "sum", "field": "balance_tia"}
+        ],
+        order_by={"sum_balance_tia": "desc"},
+        limit=10,
+        return_format="list"
+    )
+    
+    total_results = stats.get('results', [])
+    if total_results:
+        result = total_results[0]
+        total_count = result.get('count', 0)
+        total_balance = result.get('sum_balance_tia', 0)
+        avg_balance = result.get('avg_balance_tia', 0)
+        max_balance = result.get('max_balance_tia', 0)
+        min_balance = result.get('min_balance_tia', 0)
+        
+        click.echo("Balance Statistics:")
+        click.echo(f"  📊 Total records: {total_count:,}")
+        click.echo(f"  💰 Total balance: {float(total_balance):,.2f} TIA")
+        click.echo(f"  📈 Average balance: {float(avg_balance):,.2f} TIA")
+        click.echo(f"  🔝 Largest balance: {float(max_balance):,.2f} TIA")
+        click.echo(f"  🔻 Smallest balance: {float(min_balance):,.6f} TIA")
+        
+        # Recent dates
+        date_results = date_stats.get('results', [])
+        if date_results:
+            click.echo("  📅 Recent dates:")
+            for date_info in date_results[:5]:
+                date = date_info.get('date', 'Unknown')
+                count = date_info.get('count', 0)
+                total = date_info.get('sum_balance_tia', 0)
+                click.echo(f"    - {date}: {count} records, {float(total):,.2f} TIA")
+        
+        # Top addresses
+        top_results = top_addresses.get('results', [])
+        if top_results:
+            click.echo("  🏆 Top addresses:")
+            # Sort by balance descending and show top 5
+            sorted_addresses = sorted(top_results, key=lambda x: float(x.get('sum_balance_tia', 0)), reverse=True)
+            for addr in sorted_addresses[:5]:
+                address = addr.get('address', 'Unknown')
+                balance = addr.get('sum_balance_tia', 0)
+                click.echo(f"    - {address[:20]}...: {float(balance):,.2f} TIA")
+    else:
+        click.echo("No balance statistics available.")
+
 
 if __name__ == "__main__":
     cli()
