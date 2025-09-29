@@ -63,7 +63,6 @@ FILTER_CONFIGS = {
             ('version_number', 'min_version', 'max_version')
         ],
         'date_range': [
-            ('created_at', 'created_after', 'created_before')
         ]
     },
     
@@ -92,6 +91,24 @@ FILTER_CONFIGS = {
             if not params.get('include_zero_delegations', False) 
             else None
         ]
+    },
+    
+    'metrics': {
+        'exact': [
+            'metric_name',
+            'instance'
+        ],
+        'range': [
+            ('value', 'min_value', 'max_value')
+        ],
+        'date_range': [
+            ('timestamp', 'min_timestamp', 'max_timestamp')
+        ],
+        'custom': [
+            # Custom filter for hours (time threshold)
+            lambda builder, params: builder.add_custom('timestamp', {'gte': params.get('time_threshold')})
+            if params.get('time_threshold') else None
+        ]
     }
 }
 
@@ -107,7 +124,7 @@ VALID_FIELDS = {
         'id', 'peer_id', 'ip', 'city', 'region', 'country', 'lat', 'lon', 'org'
     ],
     'balances': [
-        'id', 'address', 'date', 'balance_tia', 'created_at'
+        'id', 'address', 'date', 'balance_tia'
     ],
     'releases': [
         'id', 'version', 'version_number', 'status', 'created_at'
@@ -118,6 +135,11 @@ VALID_FIELDS = {
         # Validator fields (when include_validator_info=True)
         'validator_moniker', 'validator_status', 'validator_tokens',
         'validator_commission_rate', 'validator_uptime_percent'
+    ],
+    'metrics': [
+        'id', 'instance', 'metric_name', 'value', 'timestamp',
+        # Node fields (when include_node_info=True)
+        'node_country', 'node_region', 'node_city', 'node_org'
     ]
 }
 

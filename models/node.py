@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, Float, Integer
+from sqlalchemy.orm import relationship
 from models.base import Base
 
 class Node(Base):
@@ -11,4 +12,7 @@ class Node(Base):
     country = Column(String)
     lat = Column(Float)
     lon = Column(Float)
-    org = Column(String) 
+    org = Column(String)
+    
+    # Relationship to metrics
+    metrics = relationship("Metric", back_populates="node") 

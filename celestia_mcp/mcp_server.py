@@ -44,7 +44,6 @@ class CelestiaMCP(FastMCP):
             logger.info(f"LLM selected endpoints: {endpoints}")
             api_results = await self.api_executor.execute(endpoints)
         
-        logger.info(f"API results: {api_results}")
         response = await self.response_formatter.format(plan, api_results, user_message, locale, history)
         
         # Update chat history

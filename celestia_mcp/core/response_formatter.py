@@ -12,8 +12,6 @@ class ResponseFormatter:
       
         # Logging history that is passed to prompt
         history_for_prompt = chat_history[-5:]
-        self.logger.info(f"Response Formatter - History sent to prompt: {history_for_prompt}")
-        self.logger.info(f"Response Formatter - User query: {user_query}")
         
         prompt = f"""
 You are an AI assistant for CelestiaBridge. Format the response for the user based on the following:
@@ -27,6 +25,7 @@ Always answer in the language of the user's query from User query.
 - IMPORTANT: Always display amounts in TIA, never in utia. Convert utia to TIA for display (TIA = utia / 1_000_000).
 - For all balance-related information, show values in TIA format for better readability.
 - **If the API results are empty or missing, do NOT invent or hallucinate data. Clearly tell the user that the information is unavailable or not found.**
+- IMPORTANT: Always answer in the language of the User query
 
 User query: {user_query or "No user query provided"}
 
@@ -41,6 +40,7 @@ API results:
 Generate a clear, helpful, and concise answer in the user's language if possible.
 Return only the final response text.
 """
+        self.logger.info(f"Response Formatter prompt:\n{prompt}")
         response = await self.llm(prompt)
         self.logger.info(f"LLM formatted response: {response}")
         return response.strip()

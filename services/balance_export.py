@@ -42,7 +42,6 @@ def export_balance_on_date_json(address: str, target_date: date, out_path=None) 
                     'date': balance.date.isoformat(),
                     'balance_tia': float(balance.balance_tia),
                     'record_date': balance.date.isoformat(),
-                    'created_at': balance.created_at.isoformat()
                 }
             else:
                 result = {

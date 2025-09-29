@@ -96,8 +96,14 @@ def aggregate_db_data(
             query = session.query(model_class)
         
         # Apply is_latest filter for historical tables (unless history is explicitly needed)
-        if _is_historical_table(model_class) and not _needs_history(filters):
+        is_historical = _is_historical_table(model_class)
+        needs_history = _needs_history(filters)
+        
+        if is_historical and not needs_history:
+            logger.debug(f"Applying is_latest=True filter for {model_class.__name__}")
             query = query.filter(model_class.is_latest == True)
+        else:
+            logger.debug(f"Not applying is_latest filter for {model_class.__name__} (historical: {is_historical}, needs_history: {needs_history})")
         
         # Apply filters
         if filters:
@@ -496,7 +502,14 @@ def _is_historical_table(model_class: Type) -> bool:
     Returns:
         bool: True if table is historical
     """
-    return hasattr(model_class, 'is_latest')
+    # Check if model has is_latest column by inspecting the table
+    try:
+        from sqlalchemy import inspect
+        mapper = inspect(model_class)
+        return 'is_latest' in [column.name for column in mapper.columns]
+    except:
+        # Fallback to hasattr
+        return hasattr(model_class, 'is_latest')
 
 
 def _needs_history(filters: Optional[Dict[str, Any]]) -> bool:
@@ -513,7 +526,7 @@ def _needs_history(filters: Optional[Dict[str, Any]]) -> bool:
         return False
     
     # If there are date filters - history is needed
-    date_fields = ['date', 'created_at', 'updated_at']
+    date_fields = ['date', 'updated_at']
     for field in date_fields:
         if field in filters:
             return True

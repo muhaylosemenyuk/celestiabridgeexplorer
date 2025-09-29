@@ -49,13 +49,17 @@ app = FastAPI(
     - is_null: check for null values
     
     AVAILABLE TABLES:
-    - nodes: Celestia network nodes with geographic data
+    - nodes: Bridge nodes with geographic data (peer_id, ip, city, country, org)
+    - validators: Validators with staking data (operator_address, moniker, tokens, status, uptime)
+    - metrics: Performance metrics from bridge nodes only (instance=peer_id from nodes table)
     - balance_history: Historical wallet balances
-    - validators: Validator data (status, tokens, missed blocks, uptime, etc.)
     - delegations: Delegation data with validator information
     - chain: Chain metrics and statistics
-    - metrics: Performance metrics
     - releases: Software releases
+    
+    NODE TYPES:
+    - Validators: Participate in consensus, stored in 'validators' table
+    - Bridge nodes: Provide network services, stored in 'nodes' table, metrics in 'metrics' table
     """,
     version="1.0.0"
 )
@@ -226,91 +230,142 @@ def get_chain(skip: int = Query(0, ge=0), limit: int = Query(1, ge=1, le=1000)):
 
 @app.get("/metrics/aggregate", response_model=dict, tags=["Metrics"])
 def get_aggregated_metrics(
-    metric_name: str, 
+    metric_name: Optional[str] = Query(None, description="Filter by specific metric name (optional)"), 
     hours: int = Query(24, ge=1, le=168),
     instance: Optional[str] = Query(None, description="Filter by specific instance"),
     min_value: Optional[float] = Query(None, description="Minimum metric value"),
-    max_value: Optional[float] = Query(None, description="Maximum metric value")
+    max_value: Optional[float] = Query(None, description="Maximum metric value"),
+    # Node filters
+    country: Optional[str] = Query(None, description="Filter by node country"),
+    region: Optional[str] = Query(None, description="Filter by node region"),
+    city: Optional[str] = Query(None, description="Filter by node city"),
+    org: Optional[str] = Query(None, description="Filter by node organization"),
+    # Include node info
+    include_node_info: bool = Query(False, description="Include node information (country, region, city, org)"),
+    # Grouping
+    group_by: Optional[str] = Query(None, description="Comma-separated fields to group by (e.g., 'instance,metric_name')")
 ):
     """
-    Returns aggregated metrics per instance for the last N hours with filtering.
+    Returns aggregated metrics per bridge node instance for the last N hours with filtering.
 
-    FIELDS: instance, avg_value, min_value, max_value, count
+    FIELDS: instance, metric_name, avg_value, min_value, max_value, count
+    NODE FIELDS (when include_node_info=true): node_country, node_region, node_city, node_org
 
-    FILTERS: metric_name, hours, instance, min_value, max_value
+    FILTERS: metric_name (optional), hours, instance, min_value, max_value, country, region, city, org
+    GROUPING: group_by (comma-separated fields like 'instance') - metric_name is always included
+
+    NOTE: Metrics are collected only from bridge nodes (stored in 'nodes' table).
+    Validators do not have metrics in this endpoint.
+    metric_name is automatically added to all grouping operations.
 
     EXAMPLES:
-    - Latency metrics: ?metric_name=latency&hours=24
-    - Uptime by instance: ?metric_name=uptime&instance=server1&min_value=95.0
+    - All bridge node metrics: ?hours=24 (groups by metric_name)
+    - Latency metrics: ?metric_name=latency&hours=24 (groups by metric_name)
+    - Metrics by country: ?country=US&hours=24 (groups by metric_name)
+    - With node info: ?include_node_info=true&country=DE&hours=24 (groups by metric_name)
+    - Group by instance: ?group_by=instance&hours=24 (groups by instance, metric_name)
+    - Group by city: ?group_by=node_city&include_node_info=true (groups by node_city, metric_name)
+    - Specific bridge node: ?instance=12D3KooW...&include_node_info=true (groups by metric_name)
     """
     # Calculate time filter
     time_threshold = datetime.utcnow() - timedelta(hours=hours)
     
-    # Build filters
-    filters = {
-        "metric_name": metric_name,
-        "timestamp": {"gte": time_threshold}
-    }
+    # Use filter builder for metrics
+    from services.filter_builder import build_filters
+    from filter_configs.filter_configs import get_filter_config
     
-    if instance is not None:
-        filters["instance"] = instance
-    if min_value is not None:
-        filters["value"] = {"gte": min_value}
-    if max_value is not None:
-        filters["value"] = {**filters.get("value", {}), "lte": max_value}
+    # Prepare parameters for filter builder
+    params = locals().copy()
+    params['time_threshold'] = time_threshold
     
-    # Use new universal aggregator
-    result = aggregate_db_data(
-        model_class=Metric,
-        filters=filters,
-        group_by=["instance"],
-        aggregations=[
-            {"type": "count"},
-            {"type": "avg", "field": "value"},
-            {"type": "min", "field": "value"},
-            {"type": "max", "field": "value"}
-        ],
-        order_by={"count": "desc"},
-        return_format="aggregated"
-    )
+    # Build filters using configuration
+    config = get_filter_config('metrics')
+    filters = build_filters(Metric, params, config)
+    
+    # Add node filters if provided
+    node_filters = {}
+    if country is not None:
+        node_filters["country"] = country
+    if region is not None:
+        node_filters["region"] = region
+    if city is not None:
+        node_filters["city"] = city
+    if org is not None:
+        node_filters["org"] = org
+    
+    # Add node filters to main filters
+    if node_filters:
+        filters["node"] = node_filters
+    
+    # Parse grouping - use provided group_by or default
+    group_by_list = None
+    if group_by:
+        group_by_list = [field.strip() for field in group_by.split(",")]
+        # Always add metric_name to grouping if not already present
+        if "metric_name" not in group_by_list:
+            group_by_list.append("metric_name")
+    else:
+        # Default grouping if none specified
+        group_by_list = ["metric_name"]
+    
+    print(f"DEBUG: Final group_by_list: {group_by_list}")
+    
+    # Configure JOIN with nodes (bridge nodes) if needed - like delegations
+    if include_node_info or node_filters:
+        # Join with nodes table since metrics are only from bridge nodes
+        join_fields = {
+            'join_model': Node,
+            'join_condition': Metric.node_id == Node.id,
+            'fields': [
+                {'field': 'country', 'label': 'node_country'},
+                {'field': 'region', 'label': 'node_region'},
+                {'field': 'city', 'label': 'node_city'},
+                {'field': 'org', 'label': 'node_org'}
+            ]
+        }
+        print(f"DEBUG: Using join_fields approach like delegations")
+        
+        result = aggregate_db_data(
+            model_class=Metric,
+            filters=filters,
+            group_by=group_by_list,
+            aggregations=[
+                {"type": "count"},
+                {"type": "avg", "field": "value"},
+                {"type": "min", "field": "value"},
+                {"type": "max", "field": "value"}
+            ],
+            order_by={"count": "desc"},
+            return_format="aggregated",
+            join_fields=join_fields
+        )
+    else:
+        # Use regular query without JOIN
+        result = aggregate_db_data(
+            model_class=Metric,
+            filters=filters,
+            group_by=group_by_list,
+            aggregations=[
+                {"type": "count"},
+                {"type": "avg", "field": "value"},
+                {"type": "min", "field": "value"},
+                {"type": "max", "field": "value"}
+            ],
+            order_by={"count": "desc"},
+            return_format="aggregated"
+        )
     
     return result
 
 @app.get("/releases", response_model=dict, tags=["Releases"])
 def get_releases(
     skip: int = Query(0, ge=0, description="Number of records to skip (for pagination)"),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
-    # Filters
-    version: Optional[str] = Query(None, description="Filter by exact version"),
-    status: Optional[str] = Query(None, description="Filter by release status"),
-    # Version range filters
-    min_version: Optional[float] = Query(None, ge=0, description="Minimum version number"),
-    max_version: Optional[float] = Query(None, ge=0, description="Maximum version number"),
-    # Date filters
-    created_after: Optional[str] = Query(None, description="Filter records created after this date (YYYY-MM-DD)"),
-    created_before: Optional[str] = Query(None, description="Filter records created before this date (YYYY-MM-DD)"),
-    # Grouping
-    group_by: Optional[str] = Query(None, description="Comma-separated fields to group by"),
-    # Aggregations
-    aggregations: Optional[str] = Query(None, description="JSON string with aggregations: [{'type': 'count'}, {'type': 'sum', 'field': 'field_name'}]"),
-    # Sorting
-    order_by: Optional[str] = Query("published_at", description="Field to sort by"),
-    order_direction: Optional[str] = Query("desc", description="Sort direction (asc, desc)"),
-    # Return format
-    return_format: str = Query("list", description="Return format: list, aggregated, count_only")
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return")
 ):
     """
     Returns Celestia software releases.
 
     FIELDS: version, published_at, announce_str, deadline_str
-
-    FILTERS: version, status, min_version, max_version, created_after, created_before
-
-    EXAMPLES:
-    - Recent releases: ?limit=10&order_by=published_at&order_direction=desc
-    - All releases: ?limit=1000
-    - Filter by version: ?version=1.0.0&limit=10
-    - Version range: ?min_version=1.0&max_version=2.0&limit=50
     """
     releases = json.loads(export_releases_json())
     return paginate(releases, skip, limit)
@@ -433,7 +488,7 @@ def get_validators(
     moniker: Optional[str] = Query(None, description="Filter by moniker (partial match)"),
     
     # Filters - Status and state
-    status: Optional[str] = Query(None, description="Filter by validator status (e.g., 'BOND_STATUS_BONDED')"),
+    status: Optional[str] = Query(None, description="Filter by validator status (e.g., 'BOND_STATUS_BONDED', 'BONDED', 'UNBONDED', 'UNBONDING')"),
     jailed: Optional[bool] = Query(None, description="Filter by jailed status"),
     
     # Filters - Tokens
@@ -469,7 +524,7 @@ def get_validators(
     aggregations: Optional[str] = Query(None, description="JSON string with aggregations: [{'type': 'count'}, {'type': 'sum', 'field': 'field_name'}]"),
     
     # Sorting
-    order_by: Optional[str] = Query("voting_power", description="Field to sort by"),
+    order_by: Optional[str] = Query(None, description="Field to sort by"),
     order_direction: Optional[str] = Query("desc", description="Sort direction (asc, desc)"),
     
     # Return format
@@ -498,7 +553,30 @@ def get_validators(
         
         # Build filters using configuration
         config = get_filter_config('validators')
+        
+        # Build filters using configuration
         filters = build_filters(Validator, locals(), config)
+        
+        # Validate and map status values
+        if status:
+            status_mapping = {
+                'BONDED': 'BOND_STATUS_BONDED',
+                'UNBONDED': 'BOND_STATUS_UNBONDED', 
+                'UNBONDING': 'BOND_STATUS_UNBONDING',
+                'BOND_STATUS_BONDED': 'BOND_STATUS_BONDED',
+                'BOND_STATUS_UNBONDED': 'BOND_STATUS_UNBONDED',
+                'BOND_STATUS_UNBONDING': 'BOND_STATUS_UNBONDING'
+            }
+            
+            if status in status_mapping:
+                # Update the status in filters
+                mapped_status = status_mapping[status]
+                if 'status' in filters:
+                    filters['status'] = mapped_status
+                else:
+                    filters['status'] = mapped_status
+            else:
+                return {"error": f"Invalid status '{status}'. Valid values: {list(status_mapping.keys())}"}
         
         # Parse grouping
         group_by_list = None
@@ -540,7 +618,10 @@ def get_validators(
                             filter_builder.add_custom(key, {op: val})
                 else:
                     filter_builder.add_exact(key, value)
-            filter_builder.add_custom(order_by, {'ne': None})
+            
+            # Add filters for active validators when sorting by uptime_percent or voting_power
+            filter_builder.add_custom(order_by, {'is_null': False})  # Exclude None values
+            
             filters = filter_builder.get_filters()
         
         # Use universal aggregator

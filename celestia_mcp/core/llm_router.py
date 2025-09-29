@@ -161,7 +161,6 @@ For sequential requests:
 """
         logger.info(f"LLM prompt length: {len(prompt)} chars, {len(prompt.encode('utf-8'))} bytes")
         llm_response = await self.llm(prompt)
-        logger.info(f"LLM response:\n{llm_response}")
         
         # Handle None response from LLM
         if llm_response is None:

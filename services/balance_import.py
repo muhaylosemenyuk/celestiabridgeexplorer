@@ -82,6 +82,7 @@ def import_balances_to_db(limit: Optional[int] = None):
         logger.info(f"🔄 Processing all {len(addresses_with_balances)} addresses...")
         
         all_new_balances = []
+        affected_addresses = set()  # Track addresses that need is_latest flag update
         
         for i, address_data in enumerate(addresses_with_balances):
             try:
@@ -90,26 +91,51 @@ def import_balances_to_db(limit: Optional[int] = None):
                 previous_balance = previous_balances.get(address)
                 existing_balance = existing_balances.get(address)
                 
-                # Skip if already exists for this date
+                # Check if we need to save or update
                 if existing_balance is not None:
-                    stats["unchanged_balances"] += 1
-                    continue
-                
-                # Check if we need to save
-                if previous_balance is None:
+                    # Record already exists for this date - update it
+                    if abs(float(existing_balance) - float(current_balance)) > 0.000001:  # Compare with precision
+                        # Balance changed - update existing record in database
+                        session = SessionLocal()
+                        try:
+                            existing_record = session.query(BalanceHistory).filter(
+                                BalanceHistory.address == address,
+                                BalanceHistory.date == target_date
+                            ).first()
+                            
+                            if existing_record:
+                                existing_record.balance_tia = current_balance
+                                existing_record.is_latest = True
+                                session.commit()
+                                logger.debug(f"🔄 Updated existing balance record: {address}")
+                            
+                        finally:
+                            session.close()
+                        
+                        stats["changed_balances"] += 1
+                        # Track this address for flag update
+                        affected_addresses.add(address)
+                    else:
+                        # Balance unchanged - skip
+                        stats["unchanged_balances"] += 1
+                elif previous_balance is None:
                     # New address
                     all_new_balances.append(create_balance_record(
                         address, target_date, current_balance
                     ))
                     stats["new_addresses"] += 1
+                    # Track this address for flag update
+                    affected_addresses.add(address)
                 elif abs(previous_balance - current_balance) > 0.000001:  # Compare with precision
-                    # Balance changed
+                    # Balance changed from previous date
                     all_new_balances.append(create_balance_record(
                         address, target_date, current_balance
                     ))
                     stats["changed_balances"] += 1
+                    # Track this address for flag update
+                    affected_addresses.add(address)
                 else:
-                    # Balance unchanged - don't save
+                    # Balance unchanged from previous date - don't save
                     stats["unchanged_balances"] += 1
                 
                 stats["processed"] += 1
@@ -138,7 +164,7 @@ def import_balances_to_db(limit: Optional[int] = None):
                             address=balance_data['address'],
                             date=balance_data['date'],
                             balance_tia=balance_data['balance_tia'],
-                            created_at=balance_data['created_at']
+                            is_latest=True  # New records are latest by default
                         )
                         balance_objects.append(balance_obj)
                     
@@ -150,6 +176,13 @@ def import_balances_to_db(limit: Optional[int] = None):
             except Exception as e:
                 logger.error(f"❌ Error saving to database: {e}")
                 stats["errors"] += len(all_new_balances)
+        
+        # Step 6: Update is_latest flags for affected addresses
+        if affected_addresses:
+            logger.info(f"🔄 Step 6: Updating is_latest flags for {len(affected_addresses)} affected addresses...")
+            update_latest_balance_flags(affected_addresses)
+        else:
+            logger.info("✅ Step 6: No addresses need is_latest flag update")
         
         # Final statistics
         end_time = datetime.now()
@@ -370,8 +403,46 @@ def create_balance_record(address: str, target_date: date, balance_tia: float) -
         'address': address,
         'date': target_date,
         'balance_tia': Decimal(str(balance_tia)),
-        'created_at': datetime.utcnow()
     }
+
+def update_latest_balance_flags(affected_addresses: set):
+    """
+    Update is_latest flags for balance records.
+    Sets is_latest=False for affected addresses that are NOT from today.
+    New records already have is_latest=True by default.
+    
+    Args:
+        affected_addresses: Set of addresses to update.
+    """
+    logger.info("🔄 Updating is_latest flags for balance records...")
+    
+    try:
+        session = SessionLocal()
+        try:
+            # Update only affected addresses
+            logger.info(f"📊 Updating flags for {len(affected_addresses)} affected addresses...")
+            
+            # Set False for affected addresses that are NOT from latest date
+            latest_date = session.query(func.max(BalanceHistory.date)).scalar()
+            for address in affected_addresses:
+                session.query(BalanceHistory).filter(
+                    and_(
+                        BalanceHistory.address == address,
+                        BalanceHistory.date != latest_date
+                    )
+                ).update({'is_latest': False})
+            
+            logger.info(f"✅ Set is_latest=False for non-latest records in {len(affected_addresses)} addresses")
+            
+            session.commit()
+            logger.info(f"✅ Updated is_latest flags for {len(affected_addresses)} addresses")
+                
+        finally:
+            session.close()
+            
+    except Exception as e:
+        logger.error(f"❌ Error updating is_latest flags: {e}")
+        raise
 
 def get_import_progress() -> Dict:
     """
