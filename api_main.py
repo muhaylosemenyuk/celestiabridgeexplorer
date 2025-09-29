@@ -242,8 +242,8 @@ def get_aggregated_metrics(
     org: Optional[str] = Query(None, description="Filter by node organization"),
     # Include node info
     include_node_info: bool = Query(False, description="Include node information (country, region, city, org)"),
-    # Grouping
-    group_by: Optional[str] = Query(None, description="Comma-separated fields to group by (e.g., 'instance,metric_name')")
+    # Grouping (deprecated - always groups by instance and metric_name)
+    group_by: Optional[str] = Query(None, description="DEPRECATED: Grouping is always by instance and metric_name")
 ):
     """
     Returns aggregated metrics per bridge node instance for the last N hours with filtering.
@@ -252,20 +252,22 @@ def get_aggregated_metrics(
     NODE FIELDS (when include_node_info=true): node_country, node_region, node_city, node_org
 
     FILTERS: metric_name (optional), hours, instance, min_value, max_value, country, region, city, org
-    GROUPING: group_by (comma-separated fields like 'instance') - metric_name is always included
+    NODE FILTERS: country, region, city, org (filter by node location/organization)
+    GROUPING: Always groups by 'instance' and 'metric_name' for all cases
+    - No custom grouping options available
+    - Results are always grouped by both instance and metric_name
 
     NOTE: Metrics are collected only from bridge nodes (stored in 'nodes' table).
     Validators do not have metrics in this endpoint.
-    metric_name is automatically added to all grouping operations.
 
     EXAMPLES:
-    - All bridge node metrics: ?hours=24 (groups by metric_name)
-    - Latency metrics: ?metric_name=latency&hours=24 (groups by metric_name)
-    - Metrics by country: ?country=US&hours=24 (groups by metric_name)
-    - With node info: ?include_node_info=true&country=DE&hours=24 (groups by metric_name)
-    - Group by instance: ?group_by=instance&hours=24 (groups by instance, metric_name)
-    - Group by city: ?group_by=node_city&include_node_info=true (groups by node_city, metric_name)
-    - Specific bridge node: ?instance=12D3KooW...&include_node_info=true (groups by metric_name)
+    - All bridge node metrics: ?hours=24 (always groups by instance, metric_name)
+    - Latency metrics: ?metric_name=latency&hours=24 (always groups by instance, metric_name)
+    - Metrics by country: ?country=US&hours=24 (always groups by instance, metric_name)
+    - With node info: ?include_node_info=true&country=DE&hours=24 (always groups by instance, metric_name)
+    - Specific bridge node: ?instance=12D3KooW...&include_node_info=true (always groups by instance, metric_name)
+    - Node filters: ?country=US&city=Chicago&include_node_info=true
+    - Combined filters: ?metric_name=is_sync&country=US&region=North America
     """
     # Calculate time filter
     time_threshold = datetime.utcnow() - timedelta(hours=hours)
@@ -293,52 +295,105 @@ def get_aggregated_metrics(
     if org is not None:
         node_filters["org"] = org
     
-    # Add node filters to main filters
-    if node_filters:
-        filters["node"] = node_filters
+    # Handle node filters separately - they will be applied in JOIN query
+    # Don't add them to main filters as they need special handling
     
-    # Parse grouping - use provided group_by or default
-    group_by_list = None
-    if group_by:
-        group_by_list = [field.strip() for field in group_by.split(",")]
-        # Always add metric_name to grouping if not already present
-        if "metric_name" not in group_by_list:
-            group_by_list.append("metric_name")
-    else:
-        # Default grouping if none specified
-        group_by_list = ["metric_name"]
+    # Always group by instance and metric_name for all cases
+    group_by_list = ["instance", "metric_name"]
     
-    print(f"DEBUG: Final group_by_list: {group_by_list}")
-    
-    # Configure JOIN with nodes (bridge nodes) if needed - like delegations
+    # Check if we need JOIN for node filters or include_node_info
     if include_node_info or node_filters:
-        # Join with nodes table since metrics are only from bridge nodes
-        join_fields = {
-            'join_model': Node,
-            'join_condition': Metric.node_id == Node.id,
-            'fields': [
-                {'field': 'country', 'label': 'node_country'},
-                {'field': 'region', 'label': 'node_region'},
-                {'field': 'city', 'label': 'node_city'},
-                {'field': 'org', 'label': 'node_org'}
-            ]
-        }
-        print(f"DEBUG: Using join_fields approach like delegations")
+        # Use custom JOIN query with node filters
+        from services.db import SessionLocal
+        from sqlalchemy import func
         
-        result = aggregate_db_data(
-            model_class=Metric,
-            filters=filters,
-            group_by=group_by_list,
-            aggregations=[
-                {"type": "count"},
-                {"type": "avg", "field": "value"},
-                {"type": "min", "field": "value"},
-                {"type": "max", "field": "value"}
-            ],
-            order_by={"count": "desc"},
-            return_format="aggregated",
-            join_fields=join_fields
-        )
+        session = SessionLocal()
+        try:
+            # Create base query with JOIN
+            query = session.query(
+                Metric.instance,
+                Metric.metric_name,
+                func.count().label('count'),
+                func.avg(Metric.value).label('avg_value'),
+                func.min(Metric.value).label('min_value'),
+                func.max(Metric.value).label('max_value')
+            ).join(Node, Metric.instance == Node.peer_id)
+            
+            # Apply metric filters
+            if filters:
+                for field, value in filters.items():
+                    if hasattr(Metric, field) and value is not None:
+                        if isinstance(value, dict):
+                            for operator, filter_value in value.items():
+                                if filter_value is not None:
+                                    column = getattr(Metric, field)
+                                    if operator == "eq":
+                                        query = query.filter(column == filter_value)
+                                    elif operator == "like":
+                                        query = query.filter(column.like(f"%{filter_value}%"))
+                                    elif operator == "gte":
+                                        query = query.filter(column >= filter_value)
+                                    elif operator == "lte":
+                                        query = query.filter(column <= filter_value)
+                        else:
+                            column = getattr(Metric, field)
+                            query = query.filter(column == value)
+            
+            # Apply node filters
+            if node_filters:
+                for field, value in node_filters.items():
+                    if hasattr(Node, field) and value is not None:
+                        column = getattr(Node, field)
+                        query = query.filter(column == value)
+            
+            # Add node info fields if requested
+            if include_node_info:
+                query = query.add_columns(
+                    Node.country.label('node_country'),
+                    Node.region.label('node_region'),
+                    Node.city.label('node_city'),
+                    Node.org.label('node_org')
+                )
+            
+            # Apply grouping and ordering
+            query = query.group_by(Metric.instance, Metric.metric_name)
+            if include_node_info:
+                query = query.group_by(Node.country, Node.region, Node.city, Node.org)
+            
+            query = query.order_by(func.count().desc())
+            
+            # Execute query
+            results = query.all()
+            
+            # Process results
+            processed_results = []
+            for result in results:
+                result_dict = {
+                    'instance': result.instance,
+                    'metric_name': result.metric_name,
+                    'count': result.count,
+                    'avg_value': float(result.avg_value) if result.avg_value is not None else None,
+                    'min_value': float(result.min_value) if result.min_value is not None else None,
+                    'max_value': float(result.max_value) if result.max_value is not None else None
+                }
+                
+                if include_node_info:
+                    result_dict.update({
+                        'node_country': result.node_country,
+                        'node_region': result.node_region,
+                        'node_city': result.node_city,
+                        'node_org': result.node_org
+                    })
+                
+                processed_results.append(result_dict)
+            
+            result = {
+                'results': processed_results,
+                'count': len(processed_results)
+            }
+            
+        finally:
+            session.close()
     else:
         # Use regular query without JOIN
         result = aggregate_db_data(
