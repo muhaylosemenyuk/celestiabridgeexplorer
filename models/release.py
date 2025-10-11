@@ -8,4 +8,5 @@ class Release(Base):
     version = Column(String, nullable=False)
     published_at = Column(DateTime)
     announce_str = Column(String)
-    deadline_str = Column(String) 
+    deadline_str = Column(String)
+    network = Column(String, nullable=False, default='mainnet') 

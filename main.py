@@ -17,6 +17,12 @@ from services.validator_export import ValidatorExporter
 from services.delegation_import import import_delegations_to_db
 from services.delegation_export import DelegationExporter
 
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 @click.group()
 def cli():
     """CelestiaBridge CLI entrypoint."""
@@ -110,16 +116,6 @@ def export_nodes(out):
 @click.option('--limit', default=None, type=int, help='Limit number of addresses to process (for testing)')
 def import_balances(limit):
     """Import wallet balances from Cosmos API to database."""
-    import logging
-    
-    # Configure logging for console output
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler()  # Console output
-        ]
-    )
     
     result = import_balances_to_db(limit=limit)
     click.echo(f"Balances imported: {result}")
@@ -181,16 +177,6 @@ def export_validators(export_format, out):
 @click.option('--limit', default=None, type=int, help='Limit number of validators to process (for testing)')
 def import_delegations(limit):
     """Import delegation data from Cosmos API to database."""
-    import logging
-    
-    # Configure logging for console output
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler()  # Console output
-        ]
-    )
     
     result = import_delegations_to_db(limit=limit)
     click.echo(f"Delegations imported: {result}")

@@ -415,14 +415,30 @@ def get_aggregated_metrics(
 @app.get("/releases", response_model=dict, tags=["Releases"])
 def get_releases(
     skip: int = Query(0, ge=0, description="Number of records to skip (for pagination)"),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return")
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
+    network: Optional[str] = Query(None, description="Filter by network type: mainnet or testnet")
 ):
     """
     Returns Celestia software releases.
 
-    FIELDS: version, published_at, announce_str, deadline_str
+    FIELDS: version, published_at, announce_str, deadline_str, network
+    
+    NETWORK FIELD:
+    - mainnet: Production releases without any suffixes (clean version numbers)
+    - testnet: Releases with any suffixes (including -mocha, -arabica, -rc, -alpha, -beta, etc.)
+    
+    FILTERS:
+    - network: Filter by network type (mainnet or testnet)
+    
+    EXAMPLES:
+    - GET /releases - Get all releases (paginated)
+    - GET /releases?network=mainnet - Get only mainnet releases
+    - GET /releases?network=testnet - Get only testnet releases
+    - GET /releases?limit=5 - Get first 5 releases
+    - GET /releases?network=testnet&limit=10 - Get first 10 testnet releases
+    - GET /releases?skip=20&limit=10 - Get releases 21-30 (pagination)
     """
-    releases = json.loads(export_releases_json())
+    releases = json.loads(export_releases_json(network=network))
     return paginate(releases, skip, limit)
 
 # --- Universal Balance Endpoint ---
