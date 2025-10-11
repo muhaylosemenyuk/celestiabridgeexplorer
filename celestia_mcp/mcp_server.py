@@ -35,16 +35,21 @@ class CelestiaMCP(FastMCP):
         # If locale is not specified, use automatic detection through prompt
         plan = await self.llm_router.route(user_message, locale, history)
         
+        # Check if this is a direct answer request
+        if plan.get("direct_answer"):
+            logger.info(f"LLM selected direct answer for general blockchain question")
+            api_results = {}  # Empty results for direct answers
+            response = await self.response_formatter.format(plan, api_results, user_message, locale, history)
         # Check if this is a sequential request
-        if plan.get("sequential"):
+        elif plan.get("sequential"):
             logger.info(f"LLM selected sequential request with {len(plan.get('steps', []))} steps")
             api_results = await self.api_executor.execute(plan)
+            response = await self.response_formatter.format(plan, api_results, user_message, locale, history)
         else:
             endpoints = plan.get("endpoints", [])
             logger.info(f"LLM selected endpoints: {endpoints}")
             api_results = await self.api_executor.execute(endpoints)
-        
-        response = await self.response_formatter.format(plan, api_results, user_message, locale, history)
+            response = await self.response_formatter.format(plan, api_results, user_message, locale, history)
         
         # Update chat history
         history.append({"user": user_message, "assistant": response})

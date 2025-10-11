@@ -40,7 +40,12 @@ class LLMRouter:
         logger.info(f"LLM Router - History sent to prompt: {history_for_prompt}")
         
         prompt = f"""
-You are an AI assistant for CelestiaBridge. Analyze the user query and select API endpoints to call.
+You are an AI assistant for CelestiaBridge. Analyze the user query and decide whether to use API endpoints or answer directly.
+
+QUERY TYPE DETECTION:
+- If the user asks about general information about Celestia blockchain (what is Celestia, how it works, technology, features, etc.) → use DIRECT_ANSWER
+- If the user asks about specific metrics, data, validators, nodes, balances, delegations → use API ENDPOINTS
+- If the user asks about current network status, validator performance, specific addresses → use API ENDPOINTS
 
 RULES:
 - Always answer in the language of the user's query
@@ -87,6 +92,14 @@ User query: {user_message}
 Chat context (last 5): {history_for_prompt}
 
 Examples:
+
+Direct answer for general blockchain questions:
+{{
+  "intent": "answer general question about Celestia blockchain",
+  "direct_answer": true,
+  "analysis_steps": ["provide general information about Celestia"],
+  "confidence": 0.95
+}}
 
 Basic endpoint:
 {{
@@ -141,6 +154,14 @@ Sequential query (multi-step):
 }}
 
 IMPORTANT: Return ONLY the JSON object, no explanations, no markdown, no additional text. Just the pure JSON:
+
+For direct answers (general blockchain questions):
+{{
+  "intent": "answer general question about Celestia blockchain",
+  "direct_answer": true,
+  "analysis_steps": ["provide general information about Celestia"],
+  "confidence": 0.95
+}}
 
 For single requests:
 {{
