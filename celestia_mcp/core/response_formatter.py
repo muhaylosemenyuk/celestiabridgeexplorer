@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Dict, Any, List
 from celestia_mcp.core.llm_router import get_llm_client
 
@@ -6,6 +7,21 @@ class ResponseFormatter:
     def __init__(self, llm_client=None):
         self.llm = llm_client or get_llm_client()
         self.logger = logging.getLogger("celestia_mcp.response_formatter")
+
+    def clean_markdown_formatting(self, text: str) -> str:
+        """
+        Removes double asterisks ** from AI response text for web chat
+        """
+        if not text:
+            return text
+        
+        # Remove all double asterisks **
+        cleaned_text = re.sub(r'\*\*', '', text)
+        
+        # Also remove single asterisks * if they are used for formatting
+        cleaned_text = re.sub(r'(?<!\*)\*(?!\*)', '', cleaned_text)
+        
+        return cleaned_text
 
     async def format(self, plan: Dict[str, Any], api_results: Dict[str, Any], user_query: str = None, locale: str = None, chat_history: List[Dict[str, Any]] = None) -> str:
         chat_history = chat_history or []
@@ -68,5 +84,7 @@ Return only the final response text.
 """
         self.logger.info(f"Response Formatter prompt:\n{prompt}")
         response = await self.llm(prompt)
-        self.logger.info(f"LLM formatted response: {response}")
-        return response.strip()
+        cleaned_response = self.clean_markdown_formatting(response.strip())
+        self.logger.info(f"LLM formatted response: {cleaned_response}")
+        
+        return cleaned_response
