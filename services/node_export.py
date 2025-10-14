@@ -26,7 +26,16 @@ def export_nodes_json(out_path=None):
                 "country": node.country,
                 "lat": node.lat,
                 "lon": node.lon,
-                "org": node.org,
+                "provider": node.provider,
+                # New fields from location.json
+                "continent": node.continent,
+                "updated_at": node.updated_at,
+                # Rules fields from score_breakdown.rules
+                "city_over_limit": node.city_over_limit,
+                "country_over_limit": node.country_over_limit,
+                "continent_over_limit": node.continent_over_limit,
+                "provider_over_limit": node.provider_over_limit,
+                "provider_hetzner": node.provider_hetzner,
             })
         js = json.dumps(result, ensure_ascii=False, indent=2)
         if out_path:

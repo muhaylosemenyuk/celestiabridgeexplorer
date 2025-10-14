@@ -49,7 +49,7 @@ app = FastAPI(
     - is_null: check for null values
     
     AVAILABLE TABLES:
-    - nodes: Bridge nodes with geographic data (peer_id, ip, city, country, org)
+    - nodes: Bridge nodes with geographic data (peer_id, ip, city, country, provider)
     - validators: Validators with staking data (operator_address, moniker, tokens, status, uptime)
     - metrics: Performance metrics from bridge nodes only (instance=peer_id from nodes table)
     - balance_history: Historical wallet balances
@@ -74,7 +74,16 @@ class NodeOut(BaseModel):
     country: Optional[str]
     lat: Optional[float]
     lon: Optional[float]
-    org: Optional[str]
+    provider: Optional[str]
+    # New fields from location.json
+    continent: Optional[str]
+    updated_at: Optional[str]
+    # Rules fields from score_breakdown.rules
+    city_over_limit: Optional[bool]
+    country_over_limit: Optional[bool]
+    continent_over_limit: Optional[bool]
+    provider_over_limit: Optional[bool]
+    provider_hetzner: Optional[bool]
 
 class ChainOut(BaseModel):
     timestamp: Optional[str]
@@ -139,7 +148,14 @@ def get_nodes(
     country: Optional[str] = Query(None, description="Filter by country code (e.g., 'DE', 'US')"),
     region: Optional[str] = Query(None, description="Filter by region (e.g., 'Europe', 'Asia')"),
     city: Optional[str] = Query(None, description="Filter by city name"),
-    org: Optional[str] = Query(None, description="Filter by organization/provider name"),
+    provider: Optional[str] = Query(None, description="Filter by provider name"),
+    continent: Optional[str] = Query(None, description="Filter by continent (e.g., 'EU', 'NA', 'AS')"),
+    provider_hetzner: Optional[bool] = Query(None, description="Filter by Hetzner provider (true/false)"),
+    # Decentralization filters
+    city_over_limit: Optional[bool] = Query(None, description="Filter by city over limit (true/false)"),
+    country_over_limit: Optional[bool] = Query(None, description="Filter by country over limit (true/false)"),
+    continent_over_limit: Optional[bool] = Query(None, description="Filter by continent over limit (true/false)"),
+    provider_over_limit: Optional[bool] = Query(None, description="Filter by provider over limit (true/false)"),
     # Grouping
     group_by: Optional[str] = Query(None, description="Comma-separated fields to group by (e.g., 'country,region')"),
     # Aggregations
@@ -151,17 +167,32 @@ def get_nodes(
     return_format: str = Query("list", description="Return format: list, aggregated, count_only")
 ):
     """
-    Returns Celestia network nodes with filtering, grouping, and aggregation.
+    Returns Celestia bridge network nodes with filtering, grouping, and aggregation.
+    Enhanced with decentralization metrics from location.json.
 
-    FIELDS: id, peer_id, ip, city, region, country, lat, lon, org
+    FIELDS: id, peer_id, ip, city, region, country, lat, lon, provider, continent, 
+            updated_at, city_over_limit, country_over_limit, continent_over_limit, 
+            provider_over_limit, provider_hetzner
 
-    FILTERS: country, region, city, org
+    FILTERS: country, region, city, provider, continent, provider_hetzner, city_over_limit, country_over_limit, continent_over_limit, provider_over_limit
+
+    DECENTRALIZATION METRICS:
+    - *_over_limit: Boolean flags indicating if limits are exceeded for geographic/provider diversity
+    - provider_hetzner: Boolean flag for Hetzner provider nodes
 
     EXAMPLES:
     - All nodes: ?limit=100
     - Filter by country: ?country=US&limit=50
+    - Filter by continent: ?continent=EU&limit=50
+    - Filter by provider: ?provider=Hetzner&limit=50
+    - Filter Hetzner nodes: ?provider_hetzner=true
+    - Filter nodes with poor city decentralization: ?city_over_limit=true
+    - Filter nodes with poor country decentralization: ?country_over_limit=true
+    - Filter nodes with poor continent decentralization: ?continent_over_limit=true
+    - Filter nodes with poor provider decentralization: ?provider_over_limit=true
     - Group by country: ?group_by=country&aggregations=[{"type":"count"}]&order_by=count&order_direction=desc
-    - By region: ?region=Europe&order_by=lat&order_direction=asc
+    - Group by continent: ?group_by=continent&aggregations=[{"type":"count"}]
+    - Provider analysis: ?group_by=provider&aggregations=[{"type":"count"}]&order_by=count&order_direction=desc
     """
     try:
         # Build filters
@@ -172,8 +203,20 @@ def get_nodes(
             filters['region'] = region
         if city is not None and str(type(city)).find('Query') == -1:
             filters['city'] = city
-        if org is not None and str(type(org)).find('Query') == -1:
-            filters['org'] = org
+        if provider is not None and str(type(provider)).find('Query') == -1:
+            filters['provider'] = provider
+        if continent is not None and str(type(continent)).find('Query') == -1:
+            filters['continent'] = continent
+        if provider_hetzner is not None:
+            filters['provider_hetzner'] = provider_hetzner
+        if city_over_limit is not None:
+            filters['city_over_limit'] = city_over_limit
+        if country_over_limit is not None:
+            filters['country_over_limit'] = country_over_limit
+        if continent_over_limit is not None:
+            filters['continent_over_limit'] = continent_over_limit
+        if provider_over_limit is not None:
+            filters['provider_over_limit'] = provider_over_limit
         
         # Parse grouping
         group_by_list = None
@@ -239,9 +282,9 @@ def get_aggregated_metrics(
     country: Optional[str] = Query(None, description="Filter by node country"),
     region: Optional[str] = Query(None, description="Filter by node region"),
     city: Optional[str] = Query(None, description="Filter by node city"),
-    org: Optional[str] = Query(None, description="Filter by node organization"),
+    provider: Optional[str] = Query(None, description="Filter by node provider"),
     # Include node info
-    include_node_info: bool = Query(False, description="Include node information (country, region, city, org)"),
+    include_node_info: bool = Query(False, description="Include node information (country, region, city, provider)"),
     # Grouping (deprecated - always groups by instance and metric_name)
     group_by: Optional[str] = Query(None, description="DEPRECATED: Grouping is always by instance and metric_name")
 ):
@@ -249,10 +292,10 @@ def get_aggregated_metrics(
     Returns aggregated metrics per bridge node instance for the last N hours with filtering.
 
     FIELDS: instance, metric_name, avg_value, min_value, max_value, count
-    NODE FIELDS (when include_node_info=true): node_country, node_region, node_city, node_org
+    NODE FIELDS (when include_node_info=true): node_country, node_region, node_city, node_provider
 
-    FILTERS: metric_name (optional), hours, instance, min_value, max_value, country, region, city, org
-    NODE FILTERS: country, region, city, org (filter by node location/organization)
+    FILTERS: metric_name (optional), hours, instance, min_value, max_value, country, region, city, provider
+    NODE FILTERS: country, region, city, provider (filter by node location/provider)
     GROUPING: Always groups by 'instance' and 'metric_name' for all cases
     - No custom grouping options available
     - Results are always grouped by both instance and metric_name
@@ -292,8 +335,8 @@ def get_aggregated_metrics(
         node_filters["region"] = region
     if city is not None:
         node_filters["city"] = city
-    if org is not None:
-        node_filters["org"] = org
+    if provider is not None:
+        node_filters["provider"] = provider
     
     # Handle node filters separately - they will be applied in JOIN query
     # Don't add them to main filters as they need special handling
@@ -352,13 +395,13 @@ def get_aggregated_metrics(
                     Node.country.label('node_country'),
                     Node.region.label('node_region'),
                     Node.city.label('node_city'),
-                    Node.org.label('node_org')
+                    Node.provider.label('node_provider')
                 )
             
             # Apply grouping and ordering
             query = query.group_by(Metric.instance, Metric.metric_name)
             if include_node_info:
-                query = query.group_by(Node.country, Node.region, Node.city, Node.org)
+                query = query.group_by(Node.country, Node.region, Node.city, Node.provider)
             
             query = query.order_by(func.count().desc())
             
@@ -382,7 +425,7 @@ def get_aggregated_metrics(
                         'node_country': result.node_country,
                         'node_region': result.node_region,
                         'node_city': result.node_city,
-                        'node_org': result.node_org
+                        'node_provider': result.node_provider
                     })
                 
                 processed_results.append(result_dict)

@@ -36,9 +36,9 @@ def init_db():
 
 @cli.command(name="import_geo")
 def import_geo():
-    """Import geo-csv data into the database (nodes table)."""
+    """Import bridge nodes from location.json into the database (nodes table)."""
     import_geo_to_db()
-    click.echo("Geo data imported to DB.")
+    click.echo("Bridge nodes data imported to DB from location.json.")
 
 @cli.command(name="import_metrics")
 def import_metrics():

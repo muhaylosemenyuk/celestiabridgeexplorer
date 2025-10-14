@@ -2,10 +2,10 @@
 
 ## Project Description
 
-CelestiaBridge is a modular backend platform for collecting, processing, aggregating, and exporting analytical data about the Celestia network. The system automatically gathers metrics from various sources (otel metrics, APIs, CSV, GitHub), normalizes and stores them in a structured database, and provides a unified CLI for import, export, and analytics. The main goal is to provide a single point of data collection and preparation for dashboards, monitoring, research, and analytics automation for Celestia.
+CelestiaBridge is a modular backend platform for collecting, processing, aggregating, and exporting analytical data about the Celestia network. The system automatically gathers metrics from various sources (otel metrics, APIs, JSON, GitHub), normalizes and stores them in a structured database, and provides a unified CLI for import, export, and analytics. The main goal is to provide a single point of data collection and preparation for dashboards, monitoring, research, and analytics automation for Celestia.
 
 **Key Features:**
-- Collects metrics from otel metrics, APIs, CSV, GitHub Releases
+- Collects metrics from otel metrics, APIs, JSON, GitHub Releases
 - Validator and delegation data collection and analysis
 - Advanced filtering and analytics capabilities
 - Unified pipeline for data processing and normalization
@@ -61,7 +61,7 @@ python main.py <command> [options]
 - **init_db** — Initialize the database and create all required tables.
   - Example: `python main.py init_db`
 
-- **import_geo** — Import geo-csv into the `nodes` table (updates node geoinfo).
+- **import_geo** — Import bridge nodes from location.json into the `nodes` table.
   - Example: `python main.py import_geo`
 
 - **import_metrics** — Import otel metrics into the `metrics` table.
@@ -127,9 +127,9 @@ python main.py <command> --help
 
 - `data_sources/` — Modules for reading/parsing raw data
   - `api.py` — Cosmos REST API client
-  - `geo_csv.py` — Geo CSV data parser
+  - `location_json.py` — Location JSON data parser
   - `otel.py` — OpenTelemetry metrics parser
-  - `peers_geo_mainnet_latest.csv` — Geo data for network nodes
+  - `location.json` — Bridge nodes location and decentralization data
 
 - `models/` — SQLAlchemy data models
   - `base.py` — Base model class
@@ -153,7 +153,7 @@ python main.py <command> --help
   - `metrics_import.py` — Prometheus metrics import
   - `metrics_agg.py` — Metrics aggregation and export
   - `node_export.py` — Network nodes export
-  - `geo_import.py` — Geographic data import
+  - `geo_import.py` — Bridge nodes import from location.json
   - `releases_import.py` — GitHub releases import
   - `releases_export.py` — GitHub releases export
   - `validator_import.py` — Validator data import
@@ -186,7 +186,7 @@ python main.py <command> --help
 
 The database contains the following tables, each corresponding to a SQLAlchemy model:
 
-- **nodes** (`Node` model): Network nodes information including geo-location, IP addresses, and metadata
+- **nodes** (`Node` model): Bridge nodes information including geo-location, IP addresses, provider data, and decentralization metrics
 - **metrics** (`Metric` model): Time-series metrics collected from OpenTelemetry and other sources
 - **chain** (`Chain` model): Chain-level metrics including stake, delegators, inflation, and block information
 - **releases** (`Release` model): GitHub release data for Celestia software versions
@@ -262,7 +262,7 @@ Other endpoints (`/chain`, `/releases`) use legacy export functions for backward
 flowchart TD
     subgraph Sources
         A1["otel metrics API"]
-        A2["Geo CSV"]
+        A2["Location JSON"]
         A3["Chain/Validators API"]
         A4["GitHub Releases API"]
         A5["Validators API"]
@@ -271,7 +271,7 @@ flowchart TD
 
     subgraph DataSources
         B1["parse_metrics"]
-        B2["read_geo_csv"]
+        B2["read_location_json"]
         B3["get_staked_tokens, get_validators_with_delegators, ..."]
         B4["get_github_releases"]
         B5["get_validators_data"]
@@ -345,7 +345,7 @@ flowchart TD
 
 ## Architectural Principles
 
-- All logic for reading, parsing, and normalizing raw data (OpenTelemetry metrics, CSV, APIs) is in `data_sources/`.
+- All logic for reading, parsing, and normalizing raw data (OpenTelemetry metrics, JSON, APIs) is in `data_sources/`.
 - All parsers have a unified interface: return `list[dict]` or `dict`, handle errors via try/except and logging.
 - No hardcoded paths, keys, or constants — everything is managed via `config.py` and environment variables.
 - All business logic, aggregation, and integration is in `services/`.
@@ -506,7 +506,7 @@ The API will be available at http://localhost:8002
 - `GET /balances` — universal balance endpoint with filtering, grouping, and aggregation
 - `GET /validators` — validator data with advanced filtering, grouping, and aggregation
 - `GET /delegations` — delegation data with advanced filtering, grouping, and aggregation
-- `GET /health` — API health check
+- `GET /health` — API health check (Note: This endpoint may not be available in all versions)
 
 #### Pagination Parameters
 - `skip` — how many records to skip (default: 0)
@@ -515,10 +515,12 @@ The API will be available at http://localhost:8002
 #### Advanced Filtering and Aggregation
 
 **Nodes Endpoint (`/nodes`):**
-- Filter by: `country`, `region`, `city`, `org`
-- Group by: any field (e.g., `country,region`)
+- Filter by: `country`, `region`, `city`, `provider`, `continent`, `provider_hetzner`
+- **Decentralization filters**: `city_over_limit`, `country_over_limit`, `continent_over_limit`, `provider_over_limit`
+- Group by: any field (e.g., `country,region`, `continent,provider`)
 - Aggregations: `count`, `sum`, `avg`, `min`, `max`
 - Sort by: any field with `order_by` and `order_direction`
+- **Decentralization fields**: `city_over_limit`, `country_over_limit`, `continent_over_limit`, `provider_over_limit`, `provider_hetzner`
 
 **Balances Endpoint (`/balances`):**
 - Filter by: `target_date`, `min_balance`, `max_balance`, `address`
@@ -566,6 +568,31 @@ curl "http://localhost:8002/delegations?validator_address=celestiavaloper1...&li
 
 # Get validator statistics by status
 curl "http://localhost:8002/validators?group_by=status&aggregations=[{\"type\":\"count\"},{\"type\":\"sum\",\"field\":\"tokens\"}]&return_format=aggregated"
+
+# Bridge decentralization analysis examples:
+# Get all Hetzner nodes (concentration risk)
+curl "http://localhost:8002/nodes?provider_hetzner=true&limit=50"
+
+# Get nodes with poor decentralization by country
+curl "http://localhost:8002/nodes?country_over_limit=true&limit=50"
+
+# Get nodes with poor decentralization by city
+curl "http://localhost:8002/nodes?city_over_limit=true&limit=50"
+
+# Get nodes with poor decentralization by continent
+curl "http://localhost:8002/nodes?continent_over_limit=true&limit=50"
+
+# Get nodes with poor decentralization by provider
+curl "http://localhost:8002/nodes?provider_over_limit=true&limit=50"
+
+# Combined filters: Hetzner nodes with country decentralization issues
+curl "http://localhost:8002/nodes?provider_hetzner=true&country_over_limit=true&limit=50"
+
+# Analyze provider distribution
+curl "http://localhost:8002/nodes?group_by=provider&aggregations=[{\"type\":\"count\"}]&order_by=count&order_direction=desc"
+
+# Analyze continent distribution
+curl "http://localhost:8002/nodes?group_by=continent&aggregations=[{\"type\":\"count\"}]&order_by=count&order_direction=desc"
 ```
 
 ---
@@ -590,7 +617,8 @@ uvicorn celestia_mcp.web_chat_api:app --reload --port 8003
 - Works with both local API and Cosmos REST API, automatically selecting the required endpoint.
 - Handles large paginated data (aggregation across all pages).
 - Responds in the user's language, formats answers as paragraphs and lists, never hallucinates data.
-- Supports query chaining (e.g., get block height → get block by height).
+- Supports query chaining and complex analytical queries.
+- Bridge Decentralization Analysis: Specialized understanding of decentralization metrics and provider distribution.
 
 ### How to Add New Endpoints/Queries
 - Add a new function to `services/cosmos_api.py` or to FastAPI (`api_main.py`).
@@ -623,6 +651,15 @@ flowchart TD
 - The LLM generates a plan: selects the endpoint, adds filters, aggregation, and parameter substitution.
 - The APIExecutor executes all steps, passing results between queries as needed.
 - The answer is returned in a user-friendly format, in the user's language.
+
+### Example: Bridge Decentralization Analysis
+
+> "Analyze bridge decentralization and identify concentration risks"
+
+- The LLM analyzes decentralization metrics from the nodes endpoint.
+- Identifies nodes with `provider_hetzner=true` and recommends provider diversification.
+- Flags nodes with `*_over_limit=true` fields indicating poor decentralization.
+- Provides actionable recommendations for improving bridge decentralization.
 
 ---
 

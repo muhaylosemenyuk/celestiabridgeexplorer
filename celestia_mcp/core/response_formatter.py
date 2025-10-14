@@ -18,9 +18,6 @@ class ResponseFormatter:
         # Remove all double asterisks **
         cleaned_text = re.sub(r'\*\*', '', text)
         
-        # Also remove single asterisks * if they are used for formatting
-        cleaned_text = re.sub(r'(?<!\*)\*(?!\*)', '', cleaned_text)
-        
         return cleaned_text
 
     async def format(self, plan: Dict[str, Any], api_results: Dict[str, Any], user_query: str = None, locale: str = None, chat_history: List[Dict[str, Any]] = None) -> str:
@@ -68,6 +65,17 @@ Always answer in the language of the user's query from User query.
 - For all balance-related information, show values in TIA format for better readability.
 - **If the API results are empty or missing, do NOT invent or hallucinate data. Clearly tell the user that the information is unavailable or not found.**
 - IMPORTANT: Always answer in the language of the User query
+
+DECENTRALIZATION ANALYSIS GUIDELINES:
+- When analyzing bridge nodes data, pay special attention to decentralization metrics:
+  * If provider_hetzner=true: Warn about Hetzner concentration and recommend diversifying providers
+  * If city_over_limit=true: Indicate poor city-level decentralization
+  * If country_over_limit=true: Indicate poor country-level decentralization  
+  * If continent_over_limit=true: Indicate poor continent-level decentralization
+  * If provider_over_limit=true: Indicate poor provider-level decentralization
+- Provide actionable recommendations for improving decentralization
+- Highlight risks when concentration is too high in any dimension
+- Suggest specific improvements based on the data patterns observed
 
 User query: {user_query or "No user query provided"}
 

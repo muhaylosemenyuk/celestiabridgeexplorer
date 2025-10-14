@@ -170,6 +170,7 @@ celestiabridge.db
 # Data files
 *.csv
 data_sources/*.csv
+data_sources/location.json
 
 # Logs
 *.log

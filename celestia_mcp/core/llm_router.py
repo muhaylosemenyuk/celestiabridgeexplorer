@@ -59,13 +59,24 @@ RULES:
 
 ENDPOINT SELECTION:
 - validators: for validator data
-- nodes: for node/geographic data
+- nodes: for node/geographic data and decentralization analysis
 - balances: for wallet balance data
 - chain: for chain metrics
 - metrics/aggregate: for performance metrics
 - releases: for software releases
 - delegations: for delegation data (use validator_address to filter by validator)
 - Cosmos endpoints: for blockchain data
+
+DECENTRALIZATION ANALYSIS RULES:
+- When analyzing bridge decentralization, pay special attention to these fields:
+  * provider_hetzner: true → Recommend changing provider (Hetzner concentration risk)
+  * city_over_limit: true → Bridge poorly decentralized by city
+  * country_over_limit: true → Bridge poorly decentralized by country  
+  * continent_over_limit: true → Bridge poorly decentralized by continent
+  * provider_over_limit: true → Bridge poorly decentralized by provider
+- If any *_over_limit field is true, the bridge has decentralization issues in that dimension
+- For provider_hetzner=true nodes, always suggest diversifying to other providers
+- Use these fields to assess overall bridge health and provide recommendations
 
 IMPORTANT PARAMETER MAPPING:
 - When user provides a validator address (celestiavaloper...), use validator_address parameter
