@@ -18,6 +18,9 @@ class BalanceHistory(Base):
     date = Column(Date, nullable=False, index=True)
     balance_tia = Column(Numeric(20, 6), nullable=False, default=0.0)
     
+    # Timestamp (excluded from API responses via to_dict())
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, comment="Record creation timestamp")
+    
     # Latest record flag
     is_latest = Column(Boolean, default=True, nullable=False, index=True, comment="True if this is the latest record for this address")
     
@@ -32,11 +35,14 @@ class BalanceHistory(Base):
         return f"<BalanceHistory(address='{self.address}', date='{self.date}', balance_tia={self.balance_tia})>"
     
     def to_dict(self):
-        """Convert object to dictionary for JSON serialization"""
+        """Convert object to dictionary for JSON serialization.
+        Note: created_at is excluded from API responses but is automatically set in database.
+        """
         return {
             'id': self.id,
             'address': self.address,
             'date': self.date.isoformat() if self.date else None,
             'balance_tia': float(self.balance_tia) if self.balance_tia else 0.0,
             'is_latest': self.is_latest
+            # created_at is excluded from API responses but exists in DB for internal tracking
         }

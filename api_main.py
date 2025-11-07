@@ -276,8 +276,13 @@ def get_aggregated_metrics(
     metric_name: Optional[str] = Query(None, description="Filter by specific metric name (optional)"), 
     hours: int = Query(24, ge=1, le=168),
     instance: Optional[str] = Query(None, description="Filter by specific instance"),
-    min_value: Optional[float] = Query(None, description="Minimum metric value"),
-    max_value: Optional[float] = Query(None, description="Maximum metric value"),
+    min_value: Optional[float] = Query(None, description="Minimum metric value (filters raw values before aggregation)"),
+    max_value: Optional[float] = Query(None, description="Maximum metric value (filters raw values before aggregation)"),
+    # Post-aggregation filters (filter by aggregated values)
+    min_avg_value: Optional[float] = Query(None, description="Minimum average value (filters after aggregation)"),
+    max_avg_value: Optional[float] = Query(None, description="Maximum average value (filters after aggregation)"),
+    min_max_value: Optional[float] = Query(None, description="Minimum max value (filters after aggregation)"),
+    max_max_value: Optional[float] = Query(None, description="Maximum max value (filters after aggregation)"),
     # Node filters
     country: Optional[str] = Query(None, description="Filter by node country"),
     region: Optional[str] = Query(None, description="Filter by node region"),
@@ -290,27 +295,51 @@ def get_aggregated_metrics(
 ):
     """
     Returns aggregated metrics per bridge node instance for the last N hours with filtering.
+    
+    DATA SOURCE: Metrics are collected from OpenTelemetry (OTEL) endpoint and stored in database.
+    Metrics are imported from OTEL endpoint (configured via OTEL_METRICS_URL) using import_metrics_to_db().
+    
+    AVAILABLE METRICS FROM OTEL:
+    - process_runtime_go_mem_heap_alloc_bytes: Memory heap allocation in bytes
+    - process_runtime_go_goroutines: Number of active goroutines
+    - process_runtime_go_gc_pause_ns_sum: GC pause time sum in nanoseconds
+    - eds_cache_0x40082a1b08_get_counter_total: EDS cache get counter
+    - eds_store_put_time_histogram_sum: EDS store put time sum
+    - eds_store_put_time_histogram_count: EDS store put time count
+    - eds_store_put_time_histogram_bucket: EDS store put time histogram buckets
+    - shrex_eds_server_responses_total: Share exchange EDS server responses
+    - shrex_nd_server_responses_total: Share exchange ND server responses
+    - hdr_sync_subjective_head_gauge: Subjective head height gauge
+    - hdr_store_head_height_gauge: Store head height gauge
+    - is_sync: Calculated sync percentage (0-100%) based on hdr_sync_subjective_head_gauge / hdr_store_head_height_gauge
 
     FIELDS: instance, metric_name, avg_value, min_value, max_value, count
     NODE FIELDS (when include_node_info=true): node_country, node_region, node_city, node_provider
 
-    FILTERS: metric_name (optional), hours, instance, min_value, max_value, country, region, city, provider
-    NODE FILTERS: country, region, city, provider (filter by node location/provider)
+    FILTERS: 
+    - metric_name (optional), hours, instance
+    - min_value, max_value: Filter raw metric values BEFORE aggregation
+    - min_avg_value, max_avg_value: Filter aggregated average values AFTER aggregation
+    - min_max_value, max_max_value: Filter aggregated max values AFTER aggregation
+    - country, region, city, provider: Node location/provider filters
+    
+    NOTE: 
+    - Metrics are collected only from bridge nodes (stored in 'nodes' table). Validators do not have metrics.
+    - Metrics are imported from OpenTelemetry endpoint and stored in 'metrics' table.
+    - For is_sync metric: values range from 0-100 (percentage). Use min_max_value=100&max_max_value=100 to find nodes with 100% sync.
+    - Pre-aggregation filters (min_value/max_value) filter individual metric records before grouping.
+    - Post-aggregation filters (min_avg_value/max_avg_value/min_max_value/max_max_value) filter aggregated results.
+    
     GROUPING: Always groups by 'instance' and 'metric_name' for all cases
-    - No custom grouping options available
-    - Results are always grouped by both instance and metric_name
-
-    NOTE: Metrics are collected only from bridge nodes (stored in 'nodes' table).
-    Validators do not have metrics in this endpoint.
 
     EXAMPLES:
-    - All bridge node metrics: ?hours=24 (always groups by instance, metric_name)
-    - Latency metrics: ?metric_name=latency&hours=24 (always groups by instance, metric_name)
-    - Metrics by country: ?country=US&hours=24 (always groups by instance, metric_name)
-    - With node info: ?include_node_info=true&country=DE&hours=24 (always groups by instance, metric_name)
-    - Specific bridge node: ?instance=12D3KooW...&include_node_info=true (always groups by instance, metric_name)
-    - Node filters: ?country=US&city=Chicago&include_node_info=true
-    - Combined filters: ?metric_name=is_sync&country=US&region=North America
+    - All bridge node metrics: ?hours=24
+    - Latency metrics: ?metric_name=latency&hours=24
+    - Nodes with 100% sync: ?metric_name=is_sync&min_max_value=100&max_max_value=100
+    - Nodes with avg sync >= 95%: ?metric_name=is_sync&min_avg_value=95
+    - Metrics by country: ?country=US&hours=24
+    - With node info: ?include_node_info=true&country=DE&hours=24
+    - Specific bridge node: ?instance=12D3KooW...&include_node_info=true
     """
     # Calculate time filter
     time_threshold = datetime.utcnow() - timedelta(hours=hours)
@@ -428,6 +457,20 @@ def get_aggregated_metrics(
                         'node_provider': result.node_provider
                     })
                 
+                # Apply post-aggregation filters
+                if min_avg_value is not None and result_dict['avg_value'] is not None:
+                    if result_dict['avg_value'] < min_avg_value:
+                        continue
+                if max_avg_value is not None and result_dict['avg_value'] is not None:
+                    if result_dict['avg_value'] > max_avg_value:
+                        continue
+                if min_max_value is not None and result_dict['max_value'] is not None:
+                    if result_dict['max_value'] < min_max_value:
+                        continue
+                if max_max_value is not None and result_dict['max_value'] is not None:
+                    if result_dict['max_value'] > max_max_value:
+                        continue
+                
                 processed_results.append(result_dict)
             
             result = {
@@ -452,6 +495,28 @@ def get_aggregated_metrics(
             order_by={"count": "desc"},
             return_format="aggregated"
         )
+        
+        # Apply post-aggregation filters
+        if result and 'results' in result:
+            filtered_results = []
+            for item in result['results']:
+                # Apply post-aggregation filters
+                if min_avg_value is not None and item.get('avg_value') is not None:
+                    if item['avg_value'] < min_avg_value:
+                        continue
+                if max_avg_value is not None and item.get('avg_value') is not None:
+                    if item['avg_value'] > max_avg_value:
+                        continue
+                if min_max_value is not None and item.get('max_value') is not None:
+                    if item['max_value'] < min_max_value:
+                        continue
+                if max_max_value is not None and item.get('max_value') is not None:
+                    if item['max_value'] > max_max_value:
+                        continue
+                filtered_results.append(item)
+            
+            result['results'] = filtered_results
+            result['count'] = len(filtered_results)
     
     return result
 

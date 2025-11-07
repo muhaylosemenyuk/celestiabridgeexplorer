@@ -61,8 +61,45 @@ def import_releases():
 @cli.command(name="show_table")
 @click.argument('table')
 def show_table(table):
-    """Show first 10 records from a table (e.g. nodes, metrics, chain, releases)."""
+    """
+    Show first 10 records from a table.
+    
+    Available tables: nodes, metrics, chain, releases, balance_history, validators, delegations, delegator_stats
+    
+    Examples:
+      python main.py show_table nodes
+      python main.py show_table metrics
+      python main.py show_table validators
+    """
+    # List of valid user tables (excluding system tables)
+    valid_tables = [
+        'nodes', 'metrics', 'chain', 'releases', 
+        'balance_history', 'validators', 'delegations', 'delegator_stats'
+    ]
+    
     with engine.connect() as conn:
+        # Check if table exists
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table"), {"table": table})
+        if not result.fetchone():
+            click.echo(f"Error: Table '{table}' does not exist.\n", err=True)
+            click.echo("Available tables:")
+            table_descriptions = {
+                'nodes': 'Bridge node information with geographic and provider data',
+                'metrics': 'OpenTelemetry metrics from bridge nodes',
+                'chain': 'Chain metrics (stake, delegators, inflation, etc.)',
+                'releases': 'Celestia software releases',
+                'balance_history': 'Wallet balance history',
+                'validators': 'Validator data from Cosmos API',
+                'delegations': 'Delegation records',
+                'delegator_stats': 'Delegator statistics (if available)'
+            }
+            for tbl in valid_tables:
+                desc = table_descriptions.get(tbl, '')
+                click.echo(f"  {tbl:20} - {desc}")
+            click.echo("\nExample: python main.py show_table nodes")
+            return
+        
+        # Get table data
         result = conn.execute(text(f"SELECT * FROM {table} LIMIT 10"))
         rows = result.fetchall()
         if not rows:

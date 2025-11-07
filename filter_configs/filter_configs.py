@@ -34,6 +34,8 @@ FILTER_CONFIGS = {
             'country',
             'region', 
             'city',
+            'continent',
+            'provider',
             'org'
         ]
     },
@@ -121,7 +123,10 @@ VALID_FIELDS = {
         'total_delegations', 'total_delegators'
     ],
     'nodes': [
-        'id', 'peer_id', 'ip', 'city', 'region', 'country', 'lat', 'lon', 'org'
+        'id', 'peer_id', 'ip', 'city', 'region', 'country', 'lat', 'lon', 'provider',
+        'continent', 'updated_at',
+        'city_over_limit', 'country_over_limit', 'continent_over_limit', 
+        'provider_over_limit', 'provider_hetzner'
     ],
     'balances': [
         'id', 'address', 'date', 'balance_tia'

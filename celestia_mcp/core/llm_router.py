@@ -84,6 +84,16 @@ IMPORTANT PARAMETER MAPPING:
 - For delegations endpoint: use validator_address to get delegators of that validator
 - For balances endpoint: use address parameter for specific wallet balance
 
+METRICS ENDPOINT (metrics_aggregate) IMPORTANT NOTES:
+- For is_sync metric: values are percentages from 0-100 (not 0-1)
+- To find nodes with 100% synchronization: use min_max_value=100&max_max_value=100 (NOT min_value=1&max_value=1)
+- Use post-aggregation filters for aggregated values:
+  * min_max_value/max_max_value: Filter by maximum sync value (last known sync level)
+  * min_avg_value/max_avg_value: Filter by average sync value over the period
+- Pre-aggregation filters (min_value/max_value) filter raw metric records before grouping
+- Post-aggregation filters (min_avg_value/max_avg_value/min_max_value/max_max_value) filter after aggregation
+- Example: "bridges with 100% sync" → metric_name=is_sync&min_max_value=100&max_max_value=100
+
 SEQUENTIAL REQUESTS:
 - For complex queries requiring multiple steps, use sequential requests
 - Set "sequential": true in JSON response
