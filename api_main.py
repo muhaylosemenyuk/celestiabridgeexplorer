@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 # Import field validation from filter configs
 from filter_configs.filter_configs import get_valid_fields, validate_field
 
+# Import config
+from config import CHECKTIME_JSON_PATH
+
 app = FastAPI(
     title="CelestiaBridge Explorer API",
     description="""
@@ -56,6 +59,7 @@ app = FastAPI(
     - delegations: Delegation data with validator information
     - chain: Chain metrics and statistics
     - releases: Software releases
+    - anomalies: Bridge anomalies detected from metrics (from checktime.json)
     
     NODE TYPES:
     - Validators: Participate in consensus, stored in 'validators' table
@@ -574,7 +578,7 @@ def get_balances(
     """
     Returns balance data with filtering, grouping, and aggregation.
 
-    FIELDS: id, address, date, balance_tia
+    FIELDS: id, address, balance_tia, is_latest
 
     FILTERS: address, target_date, min_balance, max_balance
 
@@ -977,6 +981,216 @@ def get_delegations(
             )
             
     except Exception as e:
+        return {"error": str(e)}
+
+
+# ===== ANOMALIES ENDPOINT =====
+
+def read_checktime_json(path=CHECKTIME_JSON_PATH):
+    """
+    Read checktime.json and return anomaly data.
+    Handles file errors and logs them.
+    """
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data
+    except FileNotFoundError:
+        logger.error(f"checktime.json not found at {path}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in checktime.json: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error reading checktime.json: {e}")
+        return None
+
+@app.get("/anomalies", response_model=dict, tags=["Anomalies"])
+def get_anomalies(
+    # Filter by bridge
+    bridge_id: Optional[str] = Query(None, description="Filter by specific bridge ID (peer_id)"),
+    # Pagination
+    skip: int = Query(0, ge=0, description="Number of records to skip (for pagination)"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
+    # Sorting
+    order_by: Optional[str] = Query("timestamp", description="Field to sort by (timestamp, deviation_rel_pct, value)"),
+    order_direction: Optional[str] = Query("desc", description="Sort direction (asc, desc)"),
+    # Filter by metric
+    metric: Optional[str] = Query(None, description="Filter by metric name (partial match)"),
+    # Filter by date range
+    min_date: Optional[str] = Query(None, description="Minimum date in YYYY-MM-DD format"),
+    max_date: Optional[str] = Query(None, description="Maximum date in YYYY-MM-DD format"),
+    # Filter by deviation
+    min_deviation_pct: Optional[float] = Query(None, description="Minimum deviation percentage"),
+    max_deviation_pct: Optional[float] = Query(None, description="Maximum deviation percentage")
+):
+    """
+    Returns bridge anomalies from checktime.json grouped by bridge_id with filtering and sorting.
+    
+    DATA SOURCE: Anomalies are detected from metrics and stored in checktime.json file.
+    
+    RESPONSE STRUCTURE:
+    - total_anomalies: Total number of anomalies across all bridges
+    - total_bridges: Total number of bridges with anomalies
+    - generated_at: When the anomaly detection was run
+    - threshold_rel: Relative threshold for anomaly detection
+    - bridges: Array of bridge objects, each containing:
+      - bridge_id: Peer ID of the bridge node
+      - anomalies_count: Number of anomalies for this bridge
+      - anomalies: Array of anomaly objects, each containing:
+        - metric: Metric name (e.g., "eds_store_put_time_histogram_count", "shrex_eds_server_responses_total")
+        - timestamp: When the anomaly occurred (UTC)
+        - value: Anomaly value
+        - baseline: Baseline value for comparison
+        - deviation_abs: Absolute deviation
+        - deviation_rel_pct: Relative deviation percentage
+        - direction: Direction of anomaly (usually "up")
+    
+    NOTE: Results are grouped by bridge_id. Bridges are sorted by number of anomalies (descending).
+    Anomalies within each bridge are sorted according to order_by parameter.
+    
+    FIELDS: bridge_id, metric, timestamp, value, baseline, deviation_abs, deviation_rel_pct, direction
+    
+    FILTERS: bridge_id, metric, min_date, max_date, min_deviation_pct, max_deviation_pct
+    
+    EXAMPLES:
+    - All anomalies grouped by bridge: ?limit=50
+    - By specific bridge: ?bridge_id=12D3KooW9qg3hzLHCeiaieEGp57n32H7vCmnx521aFTpgq9Wy4gq
+    - By metric: ?metric=shrex_eds_server_responses_total
+    - Recent anomalies: ?order_by=timestamp&order_direction=desc&limit=20
+    - High deviation: ?min_deviation_pct=1000&order_by=deviation_rel_pct&order_direction=desc
+    - Date range: ?min_date=2025-10-01&max_date=2025-10-31
+    - Combined: ?bridge_id=12D3KooW...&metric=shrex_eds_server_responses_total&min_deviation_pct=500
+    """
+    try:
+        # Read checktime.json
+        data = read_checktime_json()
+        if data is None:
+            return {"error": "Failed to read checktime.json file"}
+        
+        # Extract all anomalies with bridge_id
+        all_anomalies = []
+        for bridge in data.get("bridges", []):
+            bridge_id_value = bridge.get("bridge_id")
+            for anomaly in bridge.get("anomalies", []):
+                anomaly_with_bridge = {
+                    "bridge_id": bridge_id_value,
+                    **anomaly
+                }
+                all_anomalies.append(anomaly_with_bridge)
+        
+        # Apply filters
+        filtered_anomalies = all_anomalies
+        
+        if bridge_id:
+            filtered_anomalies = [a for a in filtered_anomalies if a.get("bridge_id") == bridge_id]
+        
+        if metric:
+            filtered_anomalies = [a for a in filtered_anomalies if metric.lower() in a.get("metric", "").lower()]
+        
+        if min_date:
+            try:
+                min_dt = datetime.strptime(min_date, "%Y-%m-%d")
+                filtered_anomalies = [
+                    a for a in filtered_anomalies 
+                    if datetime.strptime(a.get("timestamp", "").split()[0], "%Y-%m-%d") >= min_dt
+                ]
+            except ValueError:
+                return {"error": f"Invalid min_date format. Use YYYY-MM-DD"}
+        
+        if max_date:
+            try:
+                max_dt = datetime.strptime(max_date, "%Y-%m-%d")
+                filtered_anomalies = [
+                    a for a in filtered_anomalies 
+                    if datetime.strptime(a.get("timestamp", "").split()[0], "%Y-%m-%d") <= max_dt
+                ]
+            except ValueError:
+                return {"error": f"Invalid max_date format. Use YYYY-MM-DD"}
+        
+        if min_deviation_pct is not None:
+            filtered_anomalies = [
+                a for a in filtered_anomalies 
+                if a.get("deviation_rel_pct", 0) >= min_deviation_pct
+            ]
+        
+        if max_deviation_pct is not None:
+            filtered_anomalies = [
+                a for a in filtered_anomalies 
+                if a.get("deviation_rel_pct", float('inf')) <= max_deviation_pct
+            ]
+        
+        # Group anomalies by bridge_id
+        bridges_dict = {}
+        for anomaly in filtered_anomalies:
+            bridge_id_value = anomaly.get("bridge_id")
+            if bridge_id_value not in bridges_dict:
+                bridges_dict[bridge_id_value] = []
+            # Remove bridge_id from anomaly to avoid duplication
+            anomaly_copy = {k: v for k, v in anomaly.items() if k != "bridge_id"}
+            bridges_dict[bridge_id_value].append(anomaly_copy)
+        
+        # Sort anomalies within each bridge
+        if order_by:
+            reverse = order_direction == "desc"
+            try:
+                for bridge_id_value in bridges_dict:
+                    anomalies_list = bridges_dict[bridge_id_value]
+                    if order_by == "timestamp":
+                        anomalies_list.sort(
+                            key=lambda x: datetime.strptime(x.get("timestamp", ""), "%Y-%m-%d %H:%M:%S UTC"),
+                            reverse=reverse
+                        )
+                    elif order_by == "deviation_rel_pct":
+                        anomalies_list.sort(
+                            key=lambda x: x.get("deviation_rel_pct", 0),
+                            reverse=reverse
+                        )
+                    elif order_by == "value":
+                        anomalies_list.sort(
+                            key=lambda x: x.get("value", 0),
+                            reverse=reverse
+                        )
+                    else:
+                        # Try to sort by the field directly
+                        anomalies_list.sort(
+                            key=lambda x: x.get(order_by, 0),
+                            reverse=reverse
+                        )
+            except Exception as e:
+                logger.warning(f"Error sorting by {order_by}: {e}")
+        
+        # Convert to list of bridge objects
+        bridges_list = []
+        for bridge_id_value, anomalies in bridges_dict.items():
+            bridges_list.append({
+                "bridge_id": bridge_id_value,
+                "anomalies_count": len(anomalies),
+                "anomalies": anomalies
+            })
+        
+        # Sort bridges by number of anomalies (descending by default)
+        bridges_list.sort(key=lambda x: x["anomalies_count"], reverse=True)
+        
+        # Apply pagination to bridges
+        total_bridges = len(bridges_list)
+        paginated_bridges = bridges_list[skip:skip+limit]
+        
+        # Calculate total anomalies across all bridges
+        total_anomalies = sum(b["anomalies_count"] for b in bridges_list)
+        
+        return {
+            "total_anomalies": total_anomalies,
+            "total_bridges": total_bridges,
+            "skip": skip,
+            "limit": limit,
+            "generated_at": data.get("generated_at"),
+            "threshold_rel": data.get("threshold_rel"),
+            "bridges": paginated_bridges
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in get_anomalies: {e}")
         return {"error": str(e)}
 
 

@@ -171,6 +171,7 @@ celestiabridge.db
 *.csv
 data_sources/*.csv
 data_sources/location.json
+data_sources/checktime.json
 
 # Logs
 *.log

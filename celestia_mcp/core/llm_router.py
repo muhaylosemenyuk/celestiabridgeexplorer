@@ -24,7 +24,7 @@ class LLMRouter:
             self.llm = llm_client
             logger.info(f"LLMRouter: Using explicitly provided LLM client: {type(self.llm).__name__}")
 
-    async def route(self, user_message: str, locale: str = None, chat_history: List[Dict[str, Any]] = None) -> Dict:
+    async def route(self, user_message: str, locale: str = None, chat_history: List[Dict[str, Any]] = None, history_for_prompt: List[Dict[str, Any]] = None) -> Dict:
         """
         Forms a prompt for the LLM and returns a JSON plan:
         - intent
@@ -35,20 +35,22 @@ class LLMRouter:
         chat_history = chat_history or []
         docs = self.registry.get_llm_docs()
         
-        # Logging history that is passed to prompt
-        history_for_prompt = chat_history[-5:]
+        # Use provided history_for_prompt or compute from chat_history
+        if history_for_prompt is None:
+            history_for_prompt = chat_history[-5:]
         logger.info(f"LLM Router - History sent to prompt: {history_for_prompt}")
         
         prompt = f"""
-You are an AI assistant for CelestiaBridge. Analyze the user query and decide whether to use API endpoints or answer directly.
+You are an AI assistant for CelestiaBridge. Analyze the user query and decide whether to use API endpoints, answer directly, or provide CLI consultation.
 
 QUERY TYPE DETECTION:
 - If the user asks about general information about Celestia blockchain (what is Celestia, how it works, technology, features, etc.) → use DIRECT_ANSWER
+- If the user asks about CLI commands, how to execute commands on nodes, node operations, command syntax, or wants to know what commands to run → use CLI_CONSULTATION
 - If the user asks about specific metrics, data, validators, nodes, balances, delegations → use API ENDPOINTS
 - If the user asks about current network status, validator performance, specific addresses → use API ENDPOINTS
 
 RULES:
-- Always answer in the language of the user's query
+- IMPORTANT: Always answer in the English language
 - Display amounts in TIA (never utia)
 - For Cosmos endpoints: convert TIA→utia for filtering (TIA * 1_000_000)
 - For local endpoints: use TIA directly
@@ -66,17 +68,6 @@ ENDPOINT SELECTION:
 - releases: for software releases
 - delegations: for delegation data (use validator_address to filter by validator)
 - Cosmos endpoints: for blockchain data
-
-DECENTRALIZATION ANALYSIS RULES:
-- When analyzing bridge decentralization, pay special attention to these fields:
-  * provider_hetzner: true → Recommend changing provider (Hetzner concentration risk)
-  * city_over_limit: true → Bridge poorly decentralized by city
-  * country_over_limit: true → Bridge poorly decentralized by country  
-  * continent_over_limit: true → Bridge poorly decentralized by continent
-  * provider_over_limit: true → Bridge poorly decentralized by provider
-- If any *_over_limit field is true, the bridge has decentralization issues in that dimension
-- For provider_hetzner=true nodes, always suggest diversifying to other providers
-- Use these fields to assess overall bridge health and provide recommendations
 
 IMPORTANT PARAMETER MAPPING:
 - When user provides a validator address (celestiavaloper...), use validator_address parameter
@@ -181,6 +172,14 @@ For direct answers (general blockchain questions):
   "intent": "answer general question about Celestia blockchain",
   "direct_answer": true,
   "analysis_steps": ["provide general information about Celestia"],
+  "confidence": 0.95
+}}
+
+For CLI consultation (questions about CLI commands):
+{{
+  "intent": "provide CLI command consultation",
+  "cli_consultation": true,
+  "analysis_steps": ["provide CLI command guidance"],
   "confidence": 0.95
 }}
 

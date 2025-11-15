@@ -32,24 +32,32 @@ class CelestiaMCP(FastMCP):
         if history:
             logger.info(f"Last 3 messages: {history[-3:]}")
         
-        # If locale is not specified, use automatic detection through prompt
-        plan = await self.llm_router.route(user_message, locale, history)
+        # Compute history_for_prompt once (used by both router and formatter)
+        history_for_prompt = history[-5:]
         
+        # If locale is not specified, use automatic detection through prompt
+        plan = await self.llm_router.route(user_message, locale, history, history_for_prompt)
+        
+        # Check if this is a CLI consultation request
+        if plan.get("cli_consultation"):
+            logger.info(f"LLM selected CLI consultation for command-related question")
+            api_results = {}  # Empty results for CLI consultations
+            response = await self.response_formatter.format(plan, api_results, user_message, locale, history, history_for_prompt)
         # Check if this is a direct answer request
-        if plan.get("direct_answer"):
+        elif plan.get("direct_answer"):
             logger.info(f"LLM selected direct answer for general blockchain question")
             api_results = {}  # Empty results for direct answers
-            response = await self.response_formatter.format(plan, api_results, user_message, locale, history)
+            response = await self.response_formatter.format(plan, api_results, user_message, locale, history, history_for_prompt)
         # Check if this is a sequential request
         elif plan.get("sequential"):
             logger.info(f"LLM selected sequential request with {len(plan.get('steps', []))} steps")
             api_results = await self.api_executor.execute(plan)
-            response = await self.response_formatter.format(plan, api_results, user_message, locale, history)
+            response = await self.response_formatter.format(plan, api_results, user_message, locale, history, history_for_prompt)
         else:
             endpoints = plan.get("endpoints", [])
             logger.info(f"LLM selected endpoints: {endpoints}")
             api_results = await self.api_executor.execute(endpoints)
-            response = await self.response_formatter.format(plan, api_results, user_message, locale, history)
+            response = await self.response_formatter.format(plan, api_results, user_message, locale, history, history_for_prompt)
         
         # Update chat history
         history.append({"user": user_message, "assistant": response})

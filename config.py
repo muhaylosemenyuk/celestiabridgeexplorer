@@ -7,6 +7,7 @@ load_dotenv()
 DB_URL = os.getenv("DB_URL", "sqlite:///celestiabridge.db")
 OTEL_METRICS_URL = os.getenv("OTEL_METRICS_URL", "https://fdp-lunar.celestia.observer/metrics")
 LOCATION_JSON_PATH = os.getenv("LOCATION_JSON_PATH", "./data_sources/location.json")
+CHECKTIME_JSON_PATH = os.getenv("CHECKTIME_JSON_PATH", "./data_sources/checktime.json")
 
 # Cosmos API base URL
 COSMOS_API_BASE_URL = os.getenv("COSMOS_API_BASE_URL", "https://api-celestia-mainnet.validexis.com")

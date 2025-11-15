@@ -36,13 +36,12 @@ class BalanceHistory(Base):
     
     def to_dict(self):
         """Convert object to dictionary for JSON serialization.
-        Note: created_at is excluded from API responses but is automatically set in database.
+        Note: created_at and date are excluded from API responses but exist in DB for internal tracking.
         """
         return {
             'id': self.id,
             'address': self.address,
-            'date': self.date.isoformat() if self.date else None,
             'balance_tia': float(self.balance_tia) if self.balance_tia else 0.0,
             'is_latest': self.is_latest
-            # created_at is excluded from API responses but exists in DB for internal tracking
+            # created_at and date are excluded from API responses but exist in DB for internal tracking
         }
